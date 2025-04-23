@@ -1,0 +1,1 @@
+// functions like sampleFromDistribution, selectTopK, softmax

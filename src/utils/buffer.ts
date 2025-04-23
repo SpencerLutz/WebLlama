@@ -1,0 +1,1 @@
+// Functions like createBuffer, copyToBuffer, calculateBufferSize
