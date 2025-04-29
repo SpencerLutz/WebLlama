@@ -1,0 +1,8 @@
+.modelStatus {
+  background-color: var(--color-bg-tertiary);
+  color: var(--color-text-secondary);
+  padding: var(--spacing-xs) var(--spacing-md);
+  font-size: var(--font-size-sm);
+  text-align: center;
+  font-style: italic;
+}

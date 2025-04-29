@@ -1,0 +1,35 @@
+:root {
+  /* Colors */
+  --color-bg-primary: #242424;
+  --color-bg-secondary: #1a1a1a;
+  --color-bg-tertiary: #111111;
+  --color-text-primary: rgba(255, 255, 255, 0.87);
+  --color-text-secondary: #888888;
+  --color-border: #333333;
+  --color-accent: #646cff;
+  --color-accent-hover: #535bf2;
+  --color-user-message: #646cff;
+  --color-bot-message: #2c2c2c;
+  
+  /* Spacing */
+  --spacing-xs: 0.5rem;
+  --spacing-sm: 0.8rem;
+  --spacing-md: 1rem;
+  --spacing-lg: 1.5rem;
+  --spacing-xl: 2rem;
+  
+  /* Typography */
+  --font-family: Inter, system-ui, Avenir, Helvetica, Arial, sans-serif;
+  --font-size-sm: 0.85rem;
+  --font-size-md: 1rem;
+  --font-size-lg: 1.5rem;
+  --font-size-xl: 2.5em;
+  
+  /* Border radius */
+  --border-radius-sm: 4px;
+  --border-radius-md: 8px;
+  --border-radius-lg: 12px;
+  
+  /* Effects */
+  --shadow-default: 0 4px 12px rgba(0, 0, 0, 0.2);
+}

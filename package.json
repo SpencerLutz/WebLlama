@@ -1,15 +1,22 @@
 {
   "name": "webllama",
   "version": "1.0.0",
-  "main": "index.js",
+  "type": "module",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "dev": "vite --config web/config/vite.config.ts",
+    "build": "tsc && vite build --config web/config/vite.config.ts",
+    "preview": "vite preview --config web/config/vite.config.ts"
   },
   "author": "",
   "license": "ISC",
   "description": "",
   "devDependencies": {
     "@webgpu/types": "^0.1.60",
-    "typescript": "^5.8.3"
+    "typescript": "^5.8.3",
+    "vite": "^6.3.3"
+  },
+  "dependencies": {
+    "path": "^0.12.7",
+    "url": "^0.11.4"
   }
 }
