@@ -63,7 +63,6 @@ export class WebLlamaApp {
             for await (const next_tok of tokGenerator) {
                 response += next_tok;
                 botMessage.updateMessage(response);
-                await new Promise(r => setTimeout(r, 20));
             }
             
             this.modelStatus.setStatus('Ready');

@@ -5,22 +5,22 @@ export type BindingConfig = {
     bufferType: BufferTypeString;
 };
 
-export type UsageString = "copy_src" | "copy_dst" | "storage" | "uniform" | "map_read";
+export type UsageString = "copy_src" | "copy_dst" | "storage" | "uniform" | "map_read" | "indirect";
 
-export type ComputePassConfig = {
-    type: "compute";
-    pipeline: GPUComputePipeline;
-    bindGroups: Array<GPUBindGroup>;
+export type FixedWorkgroupsConfig = {
+    type: "fixed";
     workgroups: Array<number>;
 }
 
-export type CopyPassConfig = {
-    type: "copy";
-    src: GPUBuffer;
-    srcOffset: number;
-    dst: GPUBuffer;
-    dstOffset: number;
-    size: number;
+export type IndirectWorkgroupsConfig = {
+    type: "indirect";
+    workgroups: GPUBuffer;
 }
 
-export type PassConfig = ComputePassConfig | CopyPassConfig;
+export type WorkgroupsConfig = FixedWorkgroupsConfig | IndirectWorkgroupsConfig;
+
+export type PassConfig = {
+    pipeline: GPUComputePipeline;
+    bindGroups: Array<GPUBindGroup>;
+    workgroupsConfig: WorkgroupsConfig;
+}

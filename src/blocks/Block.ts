@@ -3,7 +3,6 @@ import { bufferUsageDict, calcBufferSize } from '../utils/buffer';
 
 export class Block {
     private device: GPUDevice;
-    private buffers: Array<GPUBuffer> = [];
     static bindGroupLayoutCache: Map<string, GPUBindGroupLayout> = new Map();
 
     constructor(device: GPUDevice) {
@@ -90,12 +89,10 @@ export class Block {
      * @returns The created GPU buffer
      */
     createBuffer(shape: Array<number>, usages: Array<UsageString>): GPUBuffer {
-        const buffer = this.device.createBuffer({
+        return this.device.createBuffer({
             size: calcBufferSize(shape[0], shape[1]),
             usage: usages.map((usage) => bufferUsageDict[usage]).reduce((a, b) => a | b),
         });
-        this.buffers.push(buffer);
-        return buffer;
     }
 
     /**
@@ -111,10 +108,15 @@ export class Block {
     }
 
     /**
-     * Destroys all buffers created by this Block instance.
+     * Creates a new workgroup buffer that indicates the specified workgroup shape.
+     * 
+     * @param x - The number of workgroups in the x direction
+     * @param y - (Optional) The number of workgroups in the y direction
+     * @param z - (Optional) The number of workgroups in the z direction
      */
-    destroyBuffers(): void {
-        this.buffers.forEach((buffer) => buffer.destroy());
-        this.buffers = [];
+    createWorkgroupBuffer(x: number, y: number = 1, z: number = 1): GPUBuffer {
+        const workgroups = this.createBuffer([3], ["indirect", "copy_dst"]);
+        this.writeBuffer(workgroups, [x, y, z]);
+        return workgroups
     }
 }

@@ -50,14 +50,18 @@ export class MatMulDemoBlock extends Block {
         }
         
         // define number of workgroups in each dimension
-        const workgroups = [Math.ceil(n / 8), Math.ceil(m / 8)];
+        const workgroups = this.createWorkgroupBuffer(
+            Math.ceil(n / 8), Math.ceil(m / 8)
+        );
 
         // configure passes (just one in this case)
         const passes: Array<PassConfig> = [{
-            type: "compute",
             pipeline: this.pipeline,
             bindGroups: [inputBindGroup, opBindGroup],
-            workgroups
+            workgroupsConfig: {
+                type: "indirect",
+                workgroups
+            }
         }];
 
         return { resultBuffer, passes };

@@ -2,16 +2,21 @@
 @group(0) @binding(1) var<storage, read> matrixB: array<f32>;
 
 @group(1) @binding(0) var<storage, read_write> result: array<f32>;
-@group(1) @binding(1) var<uniform, read> meta: array<u32>;
+struct Metadata {
+    n: u32,
+    k: u32, 
+    m: u32,
+}
+@group(1) @binding(1) var<uniform> metadata: Metadata;
 
 @compute @workgroup_size(8, 8)
 fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
     let x_index = global_id.x;
     let y_index = global_id.y;
 
-    let n: u32 = meta[0];
-    let k: u32 = meta[1];
-    let m: u32 = meta[2];
+    let n: u32 = metadata.n;
+    let k: u32 = metadata.k;
+    let m: u32 = metadata.m;
 
     if (x_index >= n || y_index >= m) {
         return;
