@@ -7,20 +7,10 @@ export type BindingConfig = {
 
 export type UsageString = "copy_src" | "copy_dst" | "storage" | "uniform" | "map_read" | "indirect";
 
-export type FixedWorkgroupsConfig = {
-    type: "fixed";
-    workgroups: Array<number>;
-}
-
-export type IndirectWorkgroupsConfig = {
-    type: "indirect";
-    workgroups: GPUBuffer;
-}
-
-export type WorkgroupsConfig = FixedWorkgroupsConfig | IndirectWorkgroupsConfig;
+export type WorkgroupDim = number | ((n: number) => number);
 
 export type PassConfig = {
     pipeline: GPUComputePipeline;
     bindGroups: Array<GPUBindGroup>;
-    workgroupsConfig: WorkgroupsConfig;
+    numWorkgroups: Array<WorkgroupDim>;
 }

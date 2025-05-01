@@ -55,14 +55,18 @@ export class WebLlamaApp {
             // Create an empty bot message that we'll update
             const botMessage = this.chatHistory.createBotMessage();
             
-            // Implement inference logic
-            const tokGenerator = this.model.generate(message, 50);
+            // Get the entire formatted chat history
+            const chatHistory = this.chatHistory.getFormattedHistory();
+            
+            // Implement inference logic with complete chat history
+            const tokGenerator = this.model.generate(chatHistory, 50);
             let response = "";
             
             // Update the message as new tokens arrive
             for await (const next_tok of tokGenerator) {
                 response += next_tok;
                 botMessage.updateMessage(response);
+                this.chatHistory.updateLastBotMessage(response);
             }
             
             this.modelStatus.setStatus('Ready');

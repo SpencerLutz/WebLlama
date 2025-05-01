@@ -141,10 +141,10 @@ export class Model {
             for (let i = 0; i < pass.bindGroups.length; i++) {
                 passEncoder.setBindGroup(i, pass.bindGroups[i]);
             }
-            const { type, workgroups: wg } = pass.workgroupsConfig;
-            // find a diff way to handle this
-            if (type === "fixed") passEncoder.dispatchWorkgroups(wg[0], wg[1], wg[2]);
-            else passEncoder.dispatchWorkgroupsIndirect(wg, 0);
+            const wgDims = pass.numWorkgroups.map(dim => 
+                typeof dim === "function" ? dim(history.length) : dim
+            );
+            passEncoder.dispatchWorkgroups(wgDims[0], wgDims[1], wgDims[2]);
         }
 
         passEncoder.end();

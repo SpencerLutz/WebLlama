@@ -48,20 +48,12 @@ export class MatMulDemoBlock extends Block {
                 shaderCode
             );
         }
-        
-        // define number of workgroups in each dimension
-        const workgroups = this.createWorkgroupBuffer(
-            Math.ceil(n / 8), Math.ceil(m / 8)
-        );
 
         // configure passes (just one in this case)
         const passes: Array<PassConfig> = [{
             pipeline: this.pipeline,
             bindGroups: [inputBindGroup, opBindGroup],
-            workgroupsConfig: {
-                type: "indirect",
-                workgroups
-            }
+            numWorkgroups: [Math.ceil(n / 8), (l) => Math.ceil(l / 8)]
         }];
 
         return { resultBuffer, passes };

@@ -106,17 +106,4 @@ export class Block {
         const u32Data = new Uint32Array(data);
         this.device.queue.writeBuffer(buffer, offset, u32Data);
     }
-
-    /**
-     * Creates a new workgroup buffer that indicates the specified workgroup shape.
-     * 
-     * @param x - The number of workgroups in the x direction
-     * @param y - (Optional) The number of workgroups in the y direction
-     * @param z - (Optional) The number of workgroups in the z direction
-     */
-    createWorkgroupBuffer(x: number, y: number = 1, z: number = 1): GPUBuffer {
-        const workgroups = this.createBuffer([3], ["indirect", "copy_dst"]);
-        this.writeBuffer(workgroups, [x, y, z]);
-        return workgroups
-    }
 }
