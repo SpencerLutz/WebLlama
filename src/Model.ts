@@ -161,4 +161,166 @@ export class Model {
 
         return data;
     }
+
+    private async run2(idx: Uint32Array) {
+        // Unpack model buffers and parameters
+        const {
+          posEmbdBuffer,
+          layer_buffers,
+          normWeightBuffer,
+          embeddingsBuffers,
+          deEmbeddingsBuffers
+        } = this.model;
+        const {
+          n_embd,               // 3072
+          n_head,               // 24
+          head_size,            // 128
+          n_layer,              // 28
+          intermediate_size,    // 8192
+          vocab_size,           // 128256
+          vocab_chunk_size,
+          vocab_chunk_instances,
+          num_gqa_groups,       // 8
+          attention_scale       // 1/√128
+        } = this.params;
+      
+        const seq_length = idx.length;
+        this.computePasses = [];
+      
+        let intermediateBuffer, residualBuffer;
+      
+        // ---------------- Embedding + Positional Encoding ----------------
+        {
+          const { passes, resultBuffer } = EmbedBlock.newInstance(
+            idx, seq_length, n_embd, vocab_chunk_size,
+            embeddingsBuffers, posEmbdBuffer, ResidualBlock
+          );
+          intermediateBuffer = resultBuffer;
+          residualBuffer = resultBuffer;
+          this.computePasses.push(...passes);
+        }
+      
+        // ---------------- Transformer Layers ----------------
+        for (let i = 0; i < n_layer; i++) {
+          const buffers = layer_buffers[i];
+      
+          // 1) RMSNorm before attention
+          {
+            const { passes, resultBuffer } = RMSNormBlock.newInstance(
+              seq_length, n_embd, intermediateBuffer, buffers.attnNormWeightBuffer
+            );
+            intermediateBuffer = resultBuffer;
+            this.computePasses.push(...passes);
+          }
+      
+          // 2) Grouped-Query Attention
+          {
+            const { passes, resultBuffer } = AttentionBlock.newGQAInstance(
+              seq_length, n_embd, attention_scale,
+              n_head, head_size, num_gqa_groups,
+              intermediateBuffer,
+              buffers.qWeight, buffers.kWeight, buffers.vWeight, buffers.oWeight,
+              buffers.qBias, buffers.kBias, buffers.vBias, buffers.oBias,
+              FastMatMulBlock, SoftmaxBlock
+            );
+            intermediateBuffer = resultBuffer;
+            this.computePasses.push(...passes);
+          }
+      
+          // 3) Residual connection
+          {
+            const { passes, resultBuffer } = ResidualBlock.newInstance(
+              seq_length, n_embd, intermediateBuffer, residualBuffer
+            );
+            intermediateBuffer = resultBuffer;
+            residualBuffer = resultBuffer;
+            this.computePasses.push(...passes);
+          }
+      
+          // 4) RMSNorm before feed-forward
+          {
+            const { passes, resultBuffer } = RMSNormBlock.newInstance(
+              seq_length, n_embd, intermediateBuffer, buffers.ffNormWeightBuffer
+            );
+            intermediateBuffer = resultBuffer;
+            this.computePasses.push(...passes);
+          }
+      
+          // 5) SwiGLU MLP
+          {
+            const { passes, resultBuffer } = MLPBlock.newInstance(
+              seq_length, n_embd, intermediate_size,
+              intermediateBuffer,
+              buffers.upProjWeightBuffer,
+              buffers.gateProjWeightBuffer,
+              buffers.downProjWeightBuffer,
+              buffers.upProjBiasBuffer,
+              buffers.gateProjBiasBuffer,
+              buffers.downProjBiasBuffer,
+              SiluBlock
+            );
+            intermediateBuffer = resultBuffer;
+            this.computePasses.push(...passes);
+          }
+      
+          // 6) Residual connection
+          {
+            const { passes, resultBuffer } = ResidualBlock.newInstance(
+              seq_length, n_embd, intermediateBuffer, residualBuffer
+            );
+            intermediateBuffer = resultBuffer;
+            residualBuffer = resultBuffer;
+            this.computePasses.push(...passes);
+          }
+        }
+      
+        // ---------------- Final RMSNorm ----------------
+        {
+          const { passes, resultBuffer } = RMSNormBlock.newInstance(
+            seq_length, n_embd, intermediateBuffer, normWeightBuffer
+          );
+          intermediateBuffer = resultBuffer;
+          this.computePasses.push(...passes);
+        }
+      
+        // ---------------- De-embedding to logits ----------------
+        {
+          const { passes, resultBuffer } = DeEmbedBlock.newInstance(
+            n_embd,
+            vocab_size,
+            vocab_chunk_size * vocab_chunk_instances,
+            seq_length,
+            vocab_chunk_size,
+            intermediateBuffer,
+            deEmbeddingsBuffers
+          );
+          intermediateBuffer = resultBuffer;
+          this.computePasses.push(...passes);
+        }
+      
+        // ---------------- Execute Compute Passes ----------------
+        const commandEncoder = this.device.createCommandEncoder();
+        for (const pass of this.computePasses) {
+          if (pass.flag === "compute") {
+            const passEncoder = commandEncoder.beginComputePass();
+            passEncoder.setPipeline(pass.pipeline);
+            pass.groups.forEach((group, i) => passEncoder.setBindGroup(i, group));
+            passEncoder.dispatchWorkgroups(pass.workgroups.x, pass.workgroups.y);
+            passEncoder.end();
+          } else if (pass.flag === "copy") {
+            commandEncoder.copyBufferToBuffer(
+              pass.src, pass.srcOffset, pass.dst, pass.dstOffset, pass.size
+            );
+          }
+        }
+        this.device.queue.submit([commandEncoder.finish()]);
+      
+        // ---------------- Read Back Results ----------------
+        await intermediateBuffer.mapAsync(GPUMapMode.READ);
+        const output = intermediateBuffer.getMappedRange();
+        const outputArray = new Float32Array(output).slice();
+        clearOperationCache();
+      
+        return outputArray;
+      }      
 }
