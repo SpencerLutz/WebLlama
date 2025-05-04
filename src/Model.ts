@@ -1,6 +1,7 @@
 import { MatMulDemoBlock } from "./blocks/matMulDemo/MatMulDemoBlock";
 import { PassConfig } from "./types";
 import { Tokenizer } from "./tokenizers/Tokenizer";
+import * as global from "./global";
 
 interface LoadedModelBuffers {
   // Token Embeddings (potentially chunked for DeEmbed)
@@ -166,6 +167,7 @@ export class Model {
             ? Array.from({ length: inputTokens.length }, (_, k) => k) // 0, 1, 2...
             : [currentLength - 1]; // Position of the single new token
 
+        /*    
         // --- Run Inference ---
         const startTime = performance.now();
         const logits = await this.run(inputTokens, positions); // Pass current KV cache
@@ -210,6 +212,8 @@ export class Model {
         // --- Update KV Cache (Placeholder) ---
         // The 'run' method should have updated the kvCache internally based on the 'positions' argument.
         // No explicit update needed here if 'run' handles it.
+
+        */
     }
 
     if (generatedTokens > 0) {
@@ -230,11 +234,13 @@ export class Model {
   async run(
         token_ids: number[],
         positions: number[], // For RoPE
-    ): Promise<Float32Array | null> {
+    ) {
     if (!this.device || !this.model || !this.params) {
         console.error("Cannot run inference: model not fully loaded or initialized.");
         return null;
     }
+
+    /*
 
     const { layer_buffers, normGammaBuffer, embeddingsBuffer, deEmbeddingsBuffers } = this.model;
     const { n_embd, n_head, n_kv_head, head_size, n_layer, vocab_size, intermediate_size, norm_eps, rope_theta, n_ctx } = this.params;
@@ -443,6 +449,7 @@ export class Model {
     console.debug(" Results read back.");
 
     return outputCopy;
+    */
   }
 
   // --- Model Loading Functions ---
@@ -459,7 +466,7 @@ export class Model {
 
     // Load Token Embeddings (and prepare for DeEmbedding/Output Projection)
     console.log(" Loading token embeddings (tok_embeddings.weight.bin)...");
-    const { embeddingsBuffer, deEmbeddingsBuffers } = await this.loadEmbeddingsAndDeembeddings(params, weightsFolder, 'tok_embeddings.weight.bin');
+    const { embeddingsBuffer, deEmbeddingsBuffers } = await this.loadEmbeddings(params, weightsFolder);
 
     // Load Transformer Layers
     console.log(" Loading transformer layers...");
@@ -624,76 +631,46 @@ export class Model {
         check("Activations (MLP Intermediate)", params.n_ctx * params.intermediate_size);
         // Attention scores (n_ctx * n_ctx * n_head) - can be very large, often computed tile-by-tile
         // check("Attention Scores (Full)", params.n_ctx * params.n_ctx * params.n_head);
-
-        // KV Cache size (per layer)
-        const kvCacheLayerElements = params.n_ctx * params.n_kv_head * params.head_size;
-        check("KV Cache (Key or Value, one layer)", kvCacheLayerElements, maxTotalElements); // Compare against maxBufferSize
-        console.log(` KV Cache size per layer (K or V): ${kvCacheLayerElements} elements (~${(kvCacheLayerElements * 4 / (1024**2)).toFixed(2)} MiB)`);
    }
 
 
-  // Loads token embeddings and prepares transposed versions for de-embedding.
-  async loadEmbeddingsAndDeembeddings(params: ModelParams, weightsFolder: string, embeddingFilename: string): Promise<{ embeddingsBuffer: GPUBuffer; deEmbeddingsBuffers: GPUBuffer[] }> {
-    if (!this.device) throw new Error("Device not initialized");
+   async loadEmbeddings(params: ModelParams, weightsFolder: string) {
+    console.log("Loading token embeddings...");
+    const embeddingWeights = await global.fetchBin(`${weightsFolder}/tok_embeddings.weight.bin`);
 
-    const embeddingWeights = await fetchBin(`${weightsFolder}/${embeddingFilename}`);
-    if (embeddingWeights.length !== params.vocab_size * params.n_embd) {
-        throw new Error(`Embedding file size mismatch: Expected ${params.vocab_size * params.n_embd}, got ${embeddingWeights.length}`);
-    }
-
-    // Buffer for direct embedding lookup [vocab_size, n_embd]
-    // Usage: Read-only storage in the embedding kernel.
-    const embeddingsBuffer = this.initTensor(embeddingWeights, [params.vocab_size, params.n_embd], ["storage"]);
-
-    // Prepare transposed weights for DeEmbedding [n_embd, vocab_size] (potentially chunked)
+    // Chunks are stored in row-major order and are of dimensions n_embd x vocab_chunk_size.
+    // Embedding weights are imported in column-major order and are of dimensions vocab_size x n_embd.
+    // We pre-transpose the chunk for the deEmbedding process for the matmul. Could do this on GPU later.
+    const embeddingsBuffers: GPUBuffer[] = [];
     const deEmbeddingsBuffers: GPUBuffer[] = [];
-    console.log(` Preparing DeEmbedding buffers (chunks: ${params.vocab_chunk_instances})...`);
-
-    // Transpose the entire matrix first (CPU). Consider GPU transpose for very large models.
-    console.log(" Transposing embedding matrix for DeEmbedding (CPU)...");
-    const transposedWeights = transpose(embeddingWeights, params.vocab_size, params.n_embd); // Now [n_embd, vocab_size] layout
-    console.log(" Transposition complete.");
-
-    // Slice or pad the transposed data into chunks
-    const elementsPerChunk = params.n_embd * params.vocab_chunk_size;
-    const expectedTotalTransposedElements = params.n_embd * params.vocab_size;
-
     for (let i = 0; i < params.vocab_chunk_instances; i++) {
-        console.log(`  Creating DeEmbedding chunk ${i + 1}/${params.vocab_chunk_instances}...`);
-        const startElement = i * elementsPerChunk;
-        const endElement = Math.min(startElement + elementsPerChunk, transposedWeights.length);
-        const actualElementsInChunk = endElement - startElement;
+      console.log(`Loading deEmbedding chunk ${i + 1}/${params.vocab_chunk_instances}...`);
+      const offset = i * params.vocab_chunk_size;
+      let size = params.vocab_chunk_size;
 
-        let chunkData: Float32Array;
+      const paddedArray = new Float32Array(params.vocab_chunk_size * params.n_embd);
+      if (i === params.vocab_chunk_instances - 1) {
+        size = params.vocab_size - offset;
+        // First set the actual data
+        paddedArray.set(embeddingWeights.subarray(offset * params.n_embd, offset * params.n_embd + size * params.n_embd));
+        // Then set the zeros for padding at the correct offset
+        paddedArray.set(
+            global.zeros((params.vocab_chunk_size - size) * params.n_embd), 
+            size * params.n_embd  // offset where to start writing zeros
+        );
+      } else {
+          paddedArray.set(embeddingWeights.subarray(offset * params.n_embd, offset * params.n_embd + size * params.n_embd));
+      }
 
-        if (actualElementsInChunk < elementsPerChunk || startElement >= transposedWeights.length) {
-             // This chunk needs padding (it's the last one and vocab_size wasn't multiple of chunk_size, or an empty chunk)
-             console.warn(`   Padding DeEmbedding chunk ${i}. Size: ${actualElementsInChunk}/${elementsPerChunk}`);
-             chunkData = new Float32Array(elementsPerChunk); // Allocate padded size (inits to 0)
-             if(actualElementsInChunk > 0) {
-                chunkData.set(transposedWeights.subarray(startElement, endElement));
-             }
-        } else {
-            // Full chunk
-            chunkData = transposedWeights.subarray(startElement, endElement);
-        }
+      embeddingsBuffers.push(this.initTensor(paddedArray, [params.vocab_chunk_size, params.n_embd], ["copy_from"]));
 
-        if (chunkData.length !== elementsPerChunk) {
-             console.error(`Internal error: DeEmbedding chunk ${i} final data size (${chunkData.length}) != expected chunk size (${elementsPerChunk})`);
-             // Handle error appropriately
-        }
-
-        // Dimensions for the buffer: [n_embd, vocab_chunk_size]
-        // Usage: Read-only storage in the DeEmbedding kernel(s).
-        deEmbeddingsBuffers.push(this.initTensor(chunkData, [params.n_embd, params.vocab_chunk_size], ["storage"]));
+      const chunk = global.transpose(paddedArray, params.vocab_chunk_size, params.n_embd); // Use GPU perhaps?
+      deEmbeddingsBuffers.push(this.initTensor(chunk, [params.n_embd, params.vocab_chunk_size], ["storage"]));
     }
 
-    return {
-        embeddingsBuffer,
-        deEmbeddingsBuffers
-    };
+    return { embeddingsBuffers, deEmbeddingsBuffers };
   }
-
+  
   // Loads all transformer layers concurrently
   async loadLayers(params: ModelParams, weightsFolder: string): Promise<LayerBuffers[]> {
     console.log(`Loading ${params.n_layer} transformer layers concurrently...`);
@@ -771,14 +748,14 @@ export class Model {
   async fetchAndInitTensor(
       url: string,
       dims: readonly number[],
-      usageOps: Array<keyof typeof bufferUsageDict>,
+      usageOps: Array<keyof typeof global.bufferUsageDict>,
       isInt32: boolean = false
     ): Promise<GPUBuffer> {
     if (!this.device) throw new Error("Device not initialized");
     console.log(`  Fetching ${url}...`);
     try {
         // Assuming fetchBin returns Float32Array always, adjust if it can return other types
-        const rawData = await fetchBin(url);
+        const rawData = await global.fetchBin(url);
         let data: Float32Array | Int32Array;
         const bytesPerElement = isInt32 ? Int32Array.BYTES_PER_ELEMENT : Float32Array.BYTES_PER_ELEMENT;
         const expectedElements = dims.reduce((a, b) => a * b, 1);
@@ -804,7 +781,7 @@ export class Model {
   initTensor(
       data: Float32Array | Int32Array,
       dims: readonly number[],
-      usageOps: Array<keyof typeof bufferUsageDict>,
+      usageOps: Array<keyof typeof global.bufferUsageDict>,
       mapAtCreation: boolean = true, // Default to mapping for weights/inputs
       dataType: 'float32' | 'int32' = 'float32' // Explicit type for clarity
     ): GPUBuffer {
@@ -826,7 +803,7 @@ export class Model {
     const bufferDescriptor: GPUBufferDescriptor = {
         label: `Tensor[${dims.join(',')}]_${dataType}`, // Optional label
         size: bufferSizeBytes,
-        usage: usageOps.map(getBufferUsage).reduce((a, b) => a | b),
+        usage: usageOps.map(global.getBufferUsage).reduce((a, b) => a | b),
         mappedAtCreation: mapAtCreation,
     };
     const buffer = this.device.createBuffer(bufferDescriptor);
