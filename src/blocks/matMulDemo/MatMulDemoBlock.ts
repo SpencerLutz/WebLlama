@@ -2,7 +2,7 @@ import { BindingConfig, PassConfig } from "../../types";
 import { Block } from "../Block";
 import shaderCode from "./matMulDemo.wgsl?raw";
 
-export class MatMulDemoBlock extends Block {
+export default class MatMulDemoBlock extends Block {
     /* Cache map is useful if your pipeline has variations, e.g. different
     checks in the kernel. Otherwise can just cache a single pipeline. */
     // pipelineCache: Map<string, GPUComputePipeline>

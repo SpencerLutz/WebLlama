@@ -1,14 +1,15 @@
 import { Block } from "../Block";
 import { BindingConfig, PassConfig } from "../../types";
-import shaderCode from "./matMul.wgsl?raw";
+import shaderCode from "./residual.wgsl?raw";
 
-export default class MatMulBlock extends Block {
+export default class ResidualBlock extends Block {
     constructor(device: GPUDevice) {
         super(device);
     }
 
     newInstance(
-
+        hiddenBuffer: GPUBuffer, residualBuffer: GPUBuffer,
+        embeddingSize: number, contextLength: number
     ): {
         resultBuffer: GPUBuffer;
         passes: Array<PassConfig>;

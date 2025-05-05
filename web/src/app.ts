@@ -28,7 +28,7 @@ export class WebLlamaApp {
         
         try {
             this.model = new Model();
-            await this.model.init();
+            await this.model.init("weights/");
             
             this.modelStatus.setStatus('Model initialized and ready');
             

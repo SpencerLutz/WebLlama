@@ -1,14 +1,16 @@
 import { Block } from "../Block";
 import { BindingConfig, PassConfig } from "../../types";
-import shaderCode from "./matMul.wgsl?raw";
+import shaderCode from "./swiGLU.wgsl?raw";
 
-export default class MatMulBlock extends Block {
+export default class SwiGLUBlock extends Block {
     constructor(device: GPUDevice) {
         super(device);
     }
 
     newInstance(
-
+        inputBuffer: GPUBuffer, w1WeightsBuffer: GPUBuffer,
+        w3WeightsBuffer: GPUBuffer, w2WeightsBuffer: GPUBuffer,
+        embeddingSize: number, intermediateSize: number, contextLength: number
     ): {
         resultBuffer: GPUBuffer;
         passes: Array<PassConfig>;

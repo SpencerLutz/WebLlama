@@ -1,5 +1,3 @@
-// Functions like createBuffer, copyToBuffer, calculateBufferSize
-
 export const bufferUsageDict = {
     "copy_src": GPUBufferUsage.COPY_SRC,
     "copy_dst": GPUBufferUsage.COPY_DST,
