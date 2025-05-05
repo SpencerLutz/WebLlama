@@ -19,7 +19,7 @@ export default class EmbedBlock extends Block {
         passes: Array<PassConfig>;
     } {
         const metadataBuffers = Array.from({ length: numChunks }, (_, i) => 
-            this.createBuffer([1], ["uniform", "copy_dst"]));
+            this.createBuffer([1], ["uniform", "copy_dst"], "metadataBuffer"));
         metadataBuffers.forEach((buffer, i) => this.writeBuffer(buffer, [i]));
 
         const inputBindGroupsAndLayouts = Array.from({ length: numChunks }, (_, i) => 
@@ -31,7 +31,7 @@ export default class EmbedBlock extends Block {
         const inputBindGroupLayout = inputBindGroupsAndLayouts[0].bindGroupLayout;
         const inputBindGroups = inputBindGroupsAndLayouts.map(bg => bg.bindGroup);
 
-        const resultBuffer = this.createBuffer([contextLength, embeddingSize], ["storage", "copy_src"]);
+        const resultBuffer = this.createBuffer([contextLength, embeddingSize], ["storage", "copy_src"], "resultBuffer_embed");
         const outputBindGroupConfig: BindingConfig[] = [
             { buffer: resultBuffer, bufferType: "storage" }
         ];
@@ -48,7 +48,8 @@ export default class EmbedBlock extends Block {
             this.pipeline = this.createPipeline(
                 [inputBindGroupLayout, outputBindGroupLayout], 
                 shaderCode,
-                constants
+                constants,
+                "embed"
             );
         }
 

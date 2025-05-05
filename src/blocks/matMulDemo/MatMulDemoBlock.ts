@@ -29,8 +29,8 @@ export default class MatMulDemoBlock extends Block {
             = this.createBindGroup(inputBindGroupConfigs);
 
         // create other buffers
-        const resultBuffer = this.createBuffer([n, m], ["storage", "copy_src"]);
-        const metaBuffer = this.createBuffer([3], ["uniform", "copy_dst"]);
+        const resultBuffer = this.createBuffer([n, m], ["storage", "copy_src"], "resultBuffer");
+        const metaBuffer = this.createBuffer([3], ["uniform", "copy_dst"], "metaBuffer");
         this.writeBuffer(metaBuffer, [n, k, m]);
         
         // define buffers and types for other bindings
@@ -45,7 +45,9 @@ export default class MatMulDemoBlock extends Block {
         if (!this.pipeline) {
             this.pipeline = this.createPipeline(
                 [inputBindGroupLayout, opBindGroupLayout], 
-                shaderCode
+                shaderCode,
+                {},
+                "matMulDemo"
             );
         }
 

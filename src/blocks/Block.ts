@@ -16,7 +16,7 @@ export class Block {
      * @param bufferTypes - Array of buffer type strings ("read-only-storage" | "storage" | "uniform")
      * @returns Corresponding bind group layout
      */
-    private createBindGroupLayout(bufferTypes: Array<BufferTypeString>): GPUBindGroupLayout {
+    createBindGroupLayout(bufferTypes: Array<BufferTypeString>): GPUBindGroupLayout {
         const cacheKey = bufferTypes.join('_');
 
         if (Block.bindGroupLayoutCache.has(cacheKey)) {
@@ -66,13 +66,13 @@ export class Block {
      * @param constants - Optional shader constants
      * @returns The created compute pipeline
      */
-    createPipeline(bindGroupLayouts: Array<GPUBindGroupLayout>, shaderCode: string, constants = {}): 
+    createPipeline(bindGroupLayouts: Array<GPUBindGroupLayout>, shaderCode: string, constants = {}, label: string): 
         GPUComputePipeline
     {
         const pipeline = this.device.createComputePipeline({
             layout: this.device.createPipelineLayout({ bindGroupLayouts }),
             compute: {
-                module: this.device.createShaderModule({ code: shaderCode }),
+                module: this.device.createShaderModule({ code: shaderCode, label: label}),
                 entryPoint: "main",
                 constants,
             }
@@ -88,10 +88,11 @@ export class Block {
      * @param usages - Array of buffer usage flag strings
      * @returns The created GPU buffer
      */
-    createBuffer(shape: Array<number>, usages: Array<UsageString>): GPUBuffer {
+    createBuffer(shape: Array<number>, usages: Array<UsageString>, label: string): GPUBuffer {
         return this.device.createBuffer({
             size: calcBufferSize(shape[0], shape[1]),
             usage: usages.map((usage) => bufferUsageDict[usage]).reduce((a, b) => a | b),
+            label: label
         });
     }
 

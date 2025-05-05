@@ -25,14 +25,13 @@ export class Model {
 
     private defaultTopK: number = 5;
     private defaultTemperature: number = 0.6;
-    private defaultTokens: number = 128;
+    private defaultTokens: number = 10;
 
     private passes?: Array<PassConfig>;
 
     private inputBuffer?: GPUBuffer;
     private positionBuffer?: GPUBuffer;
-    private resultBuffer?: GPUBuffer;
-    private stagingBuffer?: GPUBuffer;
+    private resultBuffers?: GPUBuffer[];
 
     private unloadDeletionStack: GPUBuffer[] = [];
 
@@ -67,23 +66,25 @@ export class Model {
         if (!paramsFromJson) {
             throw new Error("Failed to load model parameters (config.json).");
         }
-        this.params = this.deriveInternalParams(paramsFromJson, 2048);
+        this.params = this.deriveInternalParams(paramsFromJson, 512);
         [this.model] = await this.loadModelWeights(weightsDir, this.params);
 
         this.inputBuffer = this.device.createBuffer({
             size: Uint32Array.BYTES_PER_ELEMENT * this.params.n_ctx,
             usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
+            label: 'input'
         });
         // this.initTensor(new Int32Array(token_ids), [seq_length], ["storage"], true, 'int32');
 
         this.positionBuffer = this.device.createBuffer({
             size: Uint32Array.BYTES_PER_ELEMENT * this.params.n_ctx,
             usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
+            label: 'position'
         });
         // this.initTensor(new Int32Array(token_ids), [seq_length], ["storage"], true, 'int32');
 
 
-        ({ passes: this.passes, resultBuffer: this.resultBuffer } = this.getModelPasses());
+        ({ passes: this.passes, resultBuffer: this.resultBuffers } = this.getModelPasses());
 
         this.tokenizer = new Tokenizer();
 
@@ -93,7 +94,7 @@ export class Model {
 
     private getModelPasses(): {
         passes: Array<PassConfig>;
-        resultBuffer: GPUBuffer;
+        resultBuffer: GPUBuffer[];
     } {
         const { layer_buffers, normGammaBuffer, embeddingsBuffers, deEmbeddingsBuffers } = this.model!;
         const { n_embd, n_head, n_kv_head, head_size, n_layer, vocab_size, vocab_chunk_size, 
@@ -110,6 +111,7 @@ export class Model {
 
         let hiddenBuffer: GPUBuffer;
         let residualBuffer: GPUBuffer;
+        let finalBuffers: GPUBuffer[];
 
         console.log(embeddingsBuffers.length);
         console.log(embeddingsBuffers[0].size);
@@ -195,16 +197,17 @@ export class Model {
         }
 
         {
-            const { passes, resultBuffer } = deEmbedBlock.newInstance(
+            const { passes, resultBuffers } = deEmbedBlock.newInstance(
                 hiddenBuffer, deEmbeddingsBuffers, // Transposed embedding weights
                 n_embd, vocab_size, vocab_chunk_size,
                 vocab_chunk_instances, n_ctx
             ); // Output buffer: Logits [seq_length, vocab_size]
-            hiddenBuffer = resultBuffer;
+            //hiddenBuffer = resultBuffer;
             modelPasses.push(...passes);
+            finalBuffers = resultBuffers;
         }
 
-        return { passes: modelPasses, resultBuffer: hiddenBuffer };
+        return { passes: modelPasses, resultBuffer: finalBuffers };
     }
 
     /**
@@ -244,6 +247,7 @@ export class Model {
 
             // TODO: Implement top-p sampling? Llama often uses it.
             const { topKIndices, topKProbs } = selectTopK(logits, top_k);
+            console.log(`indicies ${topKIndices}`);
             const topKProbs_float = new Float32Array(topKProbs);
             const idx_next = topKIndices[sampleFromLogits(topKProbs_float, temperature)];
 
@@ -266,9 +270,9 @@ export class Model {
         this.device!.queue.writeBuffer(this.positionBuffer!, 0, new Uint32Array(positions));
 
         const commandEncoder = this.device!.createCommandEncoder();
-        const passEncoder = commandEncoder.beginComputePass();
 
         for (const pass of this.passes!) {
+            const passEncoder = commandEncoder.beginComputePass();
             passEncoder.setPipeline(pass.pipeline);
             for (let i = 0; i < pass.bindGroups.length; i++) {
                 passEncoder.setBindGroup(i, pass.bindGroups[i]);
@@ -277,22 +281,84 @@ export class Model {
                 typeof dim === "function" ? dim(inputTokens.length) : dim
             );
             passEncoder.dispatchWorkgroups(wgDims[0], wgDims[1], wgDims[2]);
+            passEncoder.end();
         }
-
-        passEncoder.end();
-        commandEncoder.copyBufferToBuffer(
-            this.resultBuffer!, 0, this.stagingBuffer!, 0, this.resultBuffer!.size
-        );
 
         this.device!.queue.submit([commandEncoder.finish()]);
 
-        await this.stagingBuffer!.mapAsync(GPUMapMode.READ);
-        const output = this.stagingBuffer!.getMappedRange();
-        const data = new Float32Array(output).slice(); // check for padding?
-        this.stagingBuffer!.unmap();
-
-        return data;
+        const finalArray = await this.gatherTiledResultsWithCopy(
+            this.device!,
+            this.device!.queue,
+            this.resultBuffers!,   // the array you returned from newInstance()
+            this.params!.n_ctx,
+            this.params!.vocab_size,
+            this.params!.vocab_chunk_size
+          );
+          
+          // `finalArray` is a Float32Array of length contextLength*vocabSize
+          return finalArray;
     }
+
+    async readBufferData(
+        device: GPUDevice,
+        queue: GPUQueue,
+        source: GPUBuffer,
+        sizeBytes: number
+      ): Promise<Float32Array> {
+        // 1. staging buffer for READ
+        const staging = device.createBuffer({
+          size: sizeBytes,
+          usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST,
+        });
+      
+        // 2. copy commands
+        const encoder = device.createCommandEncoder();
+        encoder.copyBufferToBuffer(source, 0, staging, 0, sizeBytes);
+        queue.submit([encoder.finish()]);
+      
+        // 3. map & read
+        await staging.mapAsync(GPUMapMode.READ);
+        const arrayBuffer = staging.getMappedRange();
+        const data = new Float32Array(arrayBuffer).slice();
+        staging.unmap();
+      
+        return data;
+      }
+      
+      async gatherTiledResultsWithCopy(
+        device: GPUDevice,
+        queue: GPUQueue,
+        resultBuffers: GPUBuffer[],
+        contextLength: number,
+        vocabSize: number,
+        chunkSize: number
+      ): Promise<Float32Array> {
+        const numChunks = resultBuffers.length;
+        const total = contextLength * vocabSize;
+        const out = new Float32Array(total);
+        const bytesPerChunk = contextLength * chunkSize * 4;
+      
+        for (let chunkIdx = 0; chunkIdx < numChunks; chunkIdx++) {
+          // read this chunk via a staging copy
+          const chunkData = await this.readBufferData(
+            device,
+            queue,
+            resultBuffers[chunkIdx],
+            bytesPerChunk
+          );
+      
+          // scatter into global output
+          for (let i = 0, L = chunkData.length; i < L; i++) {
+            const row = Math.floor(i / chunkSize);
+            const col = i % chunkSize;
+            const idx = row * vocabSize + chunkIdx * chunkSize + col;
+            out[idx] = chunkData[i];
+          }
+        }
+      
+        return out;
+      }      
+      
 
 
     // --- Model Loading Functions ---
