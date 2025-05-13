@@ -37,6 +37,7 @@ export default class AttentionBlock extends Block {
     const vBuffer     = this.createBuffer([contextLength, numKVHeads * headSize], ["storage"], "vBuffer");
     const attnBuffer  = this.createBuffer([numHeads, contextLength, contextLength], ["storage"], "attnBuffer");
     const outContext  = this.createBuffer([contextLength, numHeads * headSize], ["storage"], "outContext");
+    const outContext2  = this.createBuffer([contextLength, numHeads * headSize], ["storage"], "outContext2");
     const resultBuffer = this.createBuffer([contextLength, numHeads * headSize], ["storage", "copy_src"], "resultBuffer_attn");
 
     // 2) QKV projection pass
@@ -50,7 +51,7 @@ export default class AttentionBlock extends Block {
       { buffer: vBuffer,      bufferType: "storage" },
     ];
     const { bindGroup: qkvGroup, bindGroupLayout: qkvLayout } 
-      = this.createBindGroup(qkvBinds);
+      = this.createBindGroup(qkvBinds, "qkv");
 
     // 3) RoPE pass
     const ropeBinds: BindingConfig[] = [
@@ -59,7 +60,7 @@ export default class AttentionBlock extends Block {
       { buffer: positionBuffer, bufferType: "read-only-storage" },
     ];
     const { bindGroup: ropeGroup, bindGroupLayout: ropeLayout }
-      = this.createBindGroup(ropeBinds);
+      = this.createBindGroup(ropeBinds, "rope");
 
     // 4) Attention + softmax pass
     const attnBinds: BindingConfig[] = [
@@ -68,7 +69,7 @@ export default class AttentionBlock extends Block {
       { buffer: attnBuffer, bufferType: "storage" },
     ];
     const { bindGroup: attnGroup, bindGroupLayout: attnLayout }
-      = this.createBindGroup(attnBinds);
+      = this.createBindGroup(attnBinds, "attn");
 
     // 5) Weighted sum pass (attn × V)
     const outBinds1: BindingConfig[] = [
@@ -77,16 +78,16 @@ export default class AttentionBlock extends Block {
       { buffer: outContext, bufferType: "storage" },
     ];
     const { bindGroup: outGroup1, bindGroupLayout: outLayout1 }
-      = this.createBindGroup(outBinds1);
+      = this.createBindGroup(outBinds1, "weightedSum");
 
     // 6) Output projection pass
     const outBinds2: BindingConfig[] = [
-      { buffer: outContext, bufferType: "read-only-storage" },
+      { buffer: outContext2, bufferType: "read-only-storage" },
       { buffer: oWeights,   bufferType: "read-only-storage" },
       { buffer: resultBuffer, bufferType: "storage" },
     ];
     const { bindGroup: outGroup2, bindGroupLayout: outLayout2 }
-       = this.createBindGroup(outBinds2);
+       = this.createBindGroup(outBinds2, "outProj");
 
     // compile pipelines once
     const constants = {

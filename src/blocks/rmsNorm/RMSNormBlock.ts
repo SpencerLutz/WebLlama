@@ -30,7 +30,7 @@ export default class RMSNormBlock extends Block {
             { buffer: gammaBuffer, bufferType: "read-only-storage" }, // Gamma weights
         ];
         const { bindGroup: inputBindGroup, bindGroupLayout: inputBindGroupLayout } =
-            this.createBindGroup(inputBindings);
+            this.createBindGroup(inputBindings, "RmsNormInputGroup");
 
         // Output Bind Group (Group 1)
         // Create the result buffer where the normalized output will be written
@@ -43,7 +43,7 @@ export default class RMSNormBlock extends Block {
             { buffer: resultBuffer, bufferType: "storage" } // Output normalized hidden state
         ];
         const { bindGroup: outputBindGroup, bindGroupLayout: outputBindGroupLayout } =
-            this.createBindGroup(outputBindings);
+            this.createBindGroup(outputBindings, "RmsNormOutputGroup");
 
         // --- 2. Define Shader Constants ---
         const constants = {

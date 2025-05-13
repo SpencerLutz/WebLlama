@@ -52,9 +52,16 @@ export class Model {
         const adapter = await navigator.gpu.requestAdapter();
         if (!adapter) {
             throw new Error("Failed to get GPU adapter.");
+        } 
+
+        const hasTimestampSupport = adapter.features.has('timestamp-query');
+        if (!hasTimestampSupport) {
+        console.warn("Timestamp queries are not supported on this device");
+        } else {
+            console.log("here");
         }
         
-        this.device = await adapter.requestDevice();
+        this.device = await adapter.requestDevice({requiredFeatures: ["timestamp-query"],});
         if (!this.device) {
             throw new Error("Failed to get GPU device.");
         }
@@ -66,7 +73,7 @@ export class Model {
         if (!paramsFromJson) {
             throw new Error("Failed to load model parameters (config.json).");
         }
-        this.params = this.deriveInternalParams(paramsFromJson, 512);
+        this.params = this.deriveInternalParams(paramsFromJson, 256);
         [this.model] = await this.loadModelWeights(weightsDir, this.params);
 
         this.inputBuffer = this.device.createBuffer({
@@ -91,6 +98,19 @@ export class Model {
         this.initialized = true;
         console.log("Model initialized successfully.");
     }
+
+    processTimestamps(bigIntArray: BigInt64Array) {
+        const filtered = Array.from(bigIntArray).filter(ts => ts !== 0n);
+        console.log
+        const diffs = [];
+        for (let i = 0; i < filtered.length; i += 2) {
+            // Calculate difference in nanoseconds, then convert to milliseconds
+            const diffNs = Number(filtered[i + 1]) - Number(filtered[i]);
+            const diffMs = diffNs / 1_000_000; // Convert to floating-point ms
+            diffs.push(diffMs);
+        }
+        return diffs; // Differences are in milliseconds (as numbers)
+      }
 
     private getModelPasses(): {
         passes: Array<PassConfig>;
@@ -246,7 +266,7 @@ export class Model {
             const logits = await this.run(inputTokens, positions);
 
             // TODO: Implement top-p sampling? Llama often uses it.
-            const { topKIndices, topKProbs } = selectTopK(logits, top_k);
+            /*const { topKIndices, topKProbs } = selectTopK(logits, top_k);
             console.log(`indicies ${topKIndices}`);
             const topKProbs_float = new Float32Array(topKProbs);
             const idx_next = topKIndices[sampleFromLogits(topKProbs_float, temperature)];
@@ -255,6 +275,7 @@ export class Model {
 
             history = history.concat(idx_next);
             yield this.tokenizer!.decode([idx_next]);;
+            */
         }
     }
 
@@ -264,14 +285,32 @@ export class Model {
      * @param positions Positional indices corresponding to token_ids
      * @returns A Float32Array containing the logits for the input sequence
      */
-    private async run(inputTokens: number[], positions: number[]): Promise<Float32Array> {
+    private async run(inputTokens: number[], positions: number[]): Promise<BigInt64Array> {
+
+        const capacity = this.passes!.length * 2;
+        const labels = new Array();
+        const querySet = this.device!.createQuerySet({
+            type: "timestamp",
+            count: capacity,
+          });
+
+        const queryBuffer = this.device!.createBuffer({
+        size: 8 * capacity,
+        usage: GPUBufferUsage.QUERY_RESOLVE 
+            | GPUBufferUsage.STORAGE
+            | GPUBufferUsage.COPY_SRC
+            | GPUBufferUsage.COPY_DST,
+        });
 
         this.device!.queue.writeBuffer(this.inputBuffer!, 0, new Uint32Array(inputTokens));
         this.device!.queue.writeBuffer(this.positionBuffer!, 0, new Uint32Array(positions));
 
         const commandEncoder = this.device!.createCommandEncoder();
 
-        for (const pass of this.passes!) {
+        for (const [index, pass] of this.passes!.entries()) {
+            const first = index * 2
+            const second = index * 2 + 1;
+            commandEncoder.writeTimestamp(querySet, first);
             const passEncoder = commandEncoder.beginComputePass();
             passEncoder.setPipeline(pass.pipeline);
             for (let i = 0; i < pass.bindGroups.length; i++) {
@@ -280,11 +319,48 @@ export class Model {
             const wgDims = pass.numWorkgroups.map(dim => 
                 typeof dim === "function" ? dim(inputTokens.length) : dim
             );
+
             passEncoder.dispatchWorkgroups(wgDims[0], wgDims[1], wgDims[2]);
             passEncoder.end();
+            commandEncoder.writeTimestamp(querySet, second);
+            labels.push(pass.pipeline.label);
         }
 
+        commandEncoder.resolveQuerySet(
+            querySet, 
+            0,// index of first query to resolve 
+            capacity,//number of queries to resolve
+            queryBuffer, 
+            0);// destination offset
+
         this.device!.queue.submit([commandEncoder.finish()]);
+
+        const arrayBuffer = await this.readBufferData(this.device!, this.device!.queue, queryBuffer, queryBuffer.size);
+        const timingsNanoseconds = new BigInt64Array(arrayBuffer);
+        const processed = this.processTimestamps(timingsNanoseconds);
+
+        let perfOutput = new Map();
+        
+
+        for (const [index, label] of labels.entries()) {
+        if (perfOutput.has(label)) {
+            perfOutput.get(label).push(processed[index]);
+        } else {
+            perfOutput.set(label, [processed[index]]);
+        }
+        }
+
+        console.log(JSON.stringify(Array.from(perfOutput.entries())));
+        perfOutput.forEach((numbers, key) => {
+        if (numbers.length === 0) {
+            return;
+        }
+        
+        const sum = numbers.reduce((acc: number, num: number) => acc + num, 0);
+        const average = sum / numbers.length;
+        
+        console.log(`Shader "${key}": Average Time (ms) = ${average}`);
+        });
 
         const finalArray = await this.gatherTiledResultsWithCopy(
             this.device!,
@@ -295,8 +371,8 @@ export class Model {
             this.params!.vocab_chunk_size
           );
           
-          // `finalArray` is a Float32Array of length contextLength*vocabSize
-          return finalArray;
+        // `finalArray` is a Float32Array of length contextLength*vocabSize
+        return finalArray;
     }
 
     async readBufferData(
@@ -304,7 +380,7 @@ export class Model {
         queue: GPUQueue,
         source: GPUBuffer,
         sizeBytes: number
-      ): Promise<Float32Array> {
+      ): Promise<BigInt64Array> {
         // 1. staging buffer for READ
         const staging = device.createBuffer({
           size: sizeBytes,
@@ -319,7 +395,7 @@ export class Model {
         // 3. map & read
         await staging.mapAsync(GPUMapMode.READ);
         const arrayBuffer = staging.getMappedRange();
-        const data = new Float32Array(arrayBuffer).slice();
+        const data = new BigInt64Array(arrayBuffer).slice();
         staging.unmap();
       
         return data;
@@ -332,10 +408,10 @@ export class Model {
         contextLength: number,
         vocabSize: number,
         chunkSize: number
-      ): Promise<Float32Array> {
+      ): Promise<BigInt64Array> {
         const numChunks = resultBuffers.length;
         const total = contextLength * vocabSize;
-        const out = new Float32Array(total);
+        const out = new BigInt64Array(total);
         const bytesPerChunk = contextLength * chunkSize * 4;
       
         for (let chunkIdx = 0; chunkIdx < numChunks; chunkIdx++) {

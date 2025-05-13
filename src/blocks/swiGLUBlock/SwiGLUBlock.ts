@@ -38,7 +38,7 @@ export default class SwiGLUBlock extends Block {
       { buffer: inputBuffer, bufferType: 'read-only-storage' },
       { buffer: w1WeightsBuffer, bufferType: 'read-only-storage' },
       { buffer: gateBuffer, bufferType: 'storage' }
-    ]);
+    ], "weightMultiplyGroup1");
     if (!this.matmul1) {
       this.matmul1 = this.createPipeline(
         [bg1.bindGroupLayout],
@@ -53,7 +53,7 @@ export default class SwiGLUBlock extends Block {
       { buffer: inputBuffer, bufferType: 'read-only-storage' },
       { buffer: w3WeightsBuffer, bufferType: 'read-only-storage' },
       { buffer: upBuffer, bufferType: 'storage' }
-    ]);
+    ], "weightMultiplyGroup2");
     if (!this.matmul2) {
       this.matmul2 = this.createPipeline(
         [bg2.bindGroupLayout],
@@ -67,7 +67,7 @@ export default class SwiGLUBlock extends Block {
     const bg3 = this.createBindGroup([
       { buffer: gateBuffer, bufferType: 'storage' },
       { buffer: upBuffer,   bufferType: 'read-only-storage' }
-    ]);
+    ], "SiluGroup");
     if (!this.siluMul) {
       this.siluMul = this.createPipeline(
         [bg3.bindGroupLayout],
@@ -82,7 +82,7 @@ export default class SwiGLUBlock extends Block {
       { buffer: gateBuffer, bufferType: 'read-only-storage' },
       { buffer: w2WeightsBuffer, bufferType: 'read-only-storage' },
       { buffer: resultBuffer, bufferType: 'storage' }
-    ]);
+    ], "outMLPGroup");
     if (!this.matmul3) {
       this.matmul3 = this.createPipeline(
         [bg4.bindGroupLayout],

@@ -44,13 +44,13 @@ export default class DeEmbedBlock extends Block {
         { buffer: inputBuffer, bufferType: "read-only-storage" },
         { buffer: embBuf,    bufferType: "read-only-storage" },
         { buffer: metadataBuffers[i], bufferType: "uniform" },
-      ]);
+      ], "deEmbedBuffer");
       return { bindGroup, bindGroupLayout };
     });
 
     // 4) bind groups for each chunk's resultBuffer
     const resultBGs = resultBuffers.map(buf =>
-      this.createBindGroup([{ buffer: buf, bufferType: "storage" }])
+      this.createBindGroup([{ buffer: buf, bufferType: "storage" }], "resultBuffer")
     );
 
     // 5) compile the pipeline once, using the first layouts

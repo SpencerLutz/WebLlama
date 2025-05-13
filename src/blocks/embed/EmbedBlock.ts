@@ -27,7 +27,7 @@ export default class EmbedBlock extends Block {
                 { buffer: inputTokens, bufferType: "read-only-storage" },
                 { buffer: embeddingsBuffers[i], bufferType: "read-only-storage" },
                 { buffer: metadataBuffers[i], bufferType: "uniform" },
-            ]));
+            ], "inputBuf"));
         const inputBindGroupLayout = inputBindGroupsAndLayouts[0].bindGroupLayout;
         const inputBindGroups = inputBindGroupsAndLayouts.map(bg => bg.bindGroup);
 
@@ -36,7 +36,7 @@ export default class EmbedBlock extends Block {
             { buffer: resultBuffer, bufferType: "storage" }
         ];
         const { bindGroup: outputBindGroup, bindGroupLayout: outputBindGroupLayout } 
-            = this.createBindGroup(outputBindGroupConfig);
+            = this.createBindGroup(outputBindGroupConfig, "embedBuf");
 
         const constants = { 
             embedding_size: embeddingSize, 
