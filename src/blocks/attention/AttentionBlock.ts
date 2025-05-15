@@ -19,6 +19,7 @@ export default class AttentionBlock extends Block {
 
   newInstance(
     inputBuffer: GPUBuffer,
+    numTokensBuffer: GPUBuffer,
     positionBuffer: GPUBuffer,
     qWeights: GPUBuffer,
     kWeights: GPUBuffer,
@@ -42,7 +43,7 @@ export default class AttentionBlock extends Block {
 
     // 2) QKV projection pass
     const qkvBinds: BindingConfig[] = [
-      { buffer: inputBuffer, bufferType: "read-only-storage" },
+      { buffer: inputBuffer,  bufferType: "read-only-storage" },
       { buffer: qWeights,     bufferType: "read-only-storage" },
       { buffer: kWeights,     bufferType: "read-only-storage" },
       { buffer: vWeights,     bufferType: "read-only-storage" },
@@ -89,6 +90,12 @@ export default class AttentionBlock extends Block {
     const { bindGroup: outGroup2, bindGroupLayout: outLayout2 }
        = this.createBindGroup(outBinds2, "outProj");
 
+    const numTokBindGroupConfig: BindingConfig[] = [
+        { buffer: numTokensBuffer, bufferType: "uniform" }
+    ];
+    const { bindGroup: numTokBindGroup, bindGroupLayout: numTokBindGroupLayout } 
+        = this.createBindGroup(numTokBindGroupConfig, "numTokBuf");
+
     // compile pipelines once
     const constants = {
       embedding_size:    embeddingSize,
@@ -101,25 +108,25 @@ export default class AttentionBlock extends Block {
 
     if (!this.qkvPipeline) {
       this.qkvPipeline = this.createPipeline(
-        [qkvLayout], qkvShader, constants, "qkv_proj"
+        [qkvLayout, numTokBindGroupLayout], qkvShader, constants, "qkv_proj"
       );
       this.ropePipeline = this.createPipeline(
-        [ropeLayout], ropeShader, constants, "rope"
+        [ropeLayout, numTokBindGroupLayout], ropeShader, constants, "rope"
       );
       this.attnPipeline = this.createPipeline(
-        [attnLayout], attnShader, constants, "attn"
+        [attnLayout, numTokBindGroupLayout], attnShader, constants, "attn"
       );
       this.outPipeline  = this.createPipeline(
-        [outLayout1, outLayout2], outShader, constants, "out"
+        [outLayout1, outLayout2, numTokBindGroupLayout], outShader, constants, "out"
       );
     }
 
     // build PassConfig list
     const passes: PassConfig[] = [
-      { pipeline: this.qkvPipeline!, bindGroups: [qkvGroup],      numWorkgroups: [contextLength, numHeads] },
-      { pipeline: this.ropePipeline!, bindGroups: [ropeGroup],    numWorkgroups: [contextLength, numHeads] },
-      { pipeline: this.attnPipeline!, bindGroups: [attnGroup],    numWorkgroups: [numHeads, contextLength] },
-      { pipeline: this.outPipeline!,  bindGroups: [outGroup1, outGroup2], numWorkgroups: [contextLength, numHeads] },
+      { pipeline: this.qkvPipeline!, bindGroups: [qkvGroup, numTokBindGroup],      numWorkgroups: [l => l, numHeads] },
+      { pipeline: this.ropePipeline!, bindGroups: [ropeGroup, numTokBindGroup],    numWorkgroups: [l => l, numHeads] },
+      { pipeline: this.attnPipeline!, bindGroups: [attnGroup, numTokBindGroup],    numWorkgroups: [numHeads, l => l] },
+      { pipeline: this.outPipeline!,  bindGroups: [outGroup1, outGroup2, numTokBindGroup], numWorkgroups: [l => l, numHeads] },
     ];
 
     return { resultBuffer, passes };

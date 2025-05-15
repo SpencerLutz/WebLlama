@@ -5,19 +5,24 @@ override head_size: u32;
 override context_length: u32;
 override rope_theta: f32;
 
-@group(0) @binding(0) var<storage, read>  x         : array<f32>;  
-@group(0) @binding(1) var<storage, read>  wq        : array<f32>;
-@group(0) @binding(2) var<storage, read>  wk        : array<f32>;
-@group(0) @binding(3) var<storage, read>  wv        : array<f32>;
+@group(0) @binding(0) var<storage, read>       x     : array<f32>;
+@group(0) @binding(1) var<storage, read>       wq    : array<f32>;
+@group(0) @binding(2) var<storage, read>       wk    : array<f32>;
+@group(0) @binding(3) var<storage, read>       wv    : array<f32>;
 @group(0) @binding(4) var<storage, read_write> q_out : array<f32>;
 @group(0) @binding(5) var<storage, read_write> k_out : array<f32>;
 @group(0) @binding(6) var<storage, read_write> v_out : array<f32>;
+
+struct NumToksData {
+    num_tokens: u32
+}
+@group(1) @binding(0) var<uniform> num_toks_data: NumToksData;
 
 @compute @workgroup_size(8,8)
 fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
   let t = gid.x;          // token index
   let h = gid.y;          // head index (for Q) or kv-head for K/V
-  if (t >= context_length) { return; }
+  if (t >= num_toks_data.num_tokens) { return; }
 
   // Q projection
   if (h < num_heads) {

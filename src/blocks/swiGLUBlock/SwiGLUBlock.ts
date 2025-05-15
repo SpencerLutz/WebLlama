@@ -15,6 +15,7 @@ export default class SwiGLUBlock extends Block {
 
   newInstance(
     inputBuffer: GPUBuffer,
+    numTokensBuffer: GPUBuffer,
     w1WeightsBuffer: GPUBuffer,
     w3WeightsBuffer: GPUBuffer,
     w2WeightsBuffer: GPUBuffer,
@@ -33,6 +34,12 @@ export default class SwiGLUBlock extends Block {
     // reuse gateBuffer for activated
     const resultBuffer = this.createBuffer([M, N2], ['storage', 'copy_src'], "resultBuffer_mlp");
 
+    const numTokBindGroupConfig: BindingConfig[] = [
+        { buffer: numTokensBuffer, bufferType: "uniform" }
+    ];
+    const { bindGroup: numTokBindGroup, bindGroupLayout: numTokBindGroupLayout } 
+        = this.createBindGroup(numTokBindGroupConfig, "numTokBuf");
+
     // 1) input × W1 → gateBuffer
     const bg1 = this.createBindGroup([
       { buffer: inputBuffer, bufferType: 'read-only-storage' },
@@ -41,7 +48,7 @@ export default class SwiGLUBlock extends Block {
     ], "weightMultiplyGroup1");
     if (!this.matmul1) {
       this.matmul1 = this.createPipeline(
-        [bg1.bindGroupLayout],
+        [bg1.bindGroupLayout, numTokBindGroupLayout],
         matmulShader,
         { M, K: K1, N: N1 },
         "matmul_swiglu"
@@ -56,7 +63,7 @@ export default class SwiGLUBlock extends Block {
     ], "weightMultiplyGroup2");
     if (!this.matmul2) {
       this.matmul2 = this.createPipeline(
-        [bg2.bindGroupLayout],
+        [bg2.bindGroupLayout, numTokBindGroupLayout],
         matmulShader,
         { M, K: K1, N: N1 },
         "matmul_swiglu"
@@ -70,9 +77,9 @@ export default class SwiGLUBlock extends Block {
     ], "SiluGroup");
     if (!this.siluMul) {
       this.siluMul = this.createPipeline(
-        [bg3.bindGroupLayout],
+        [bg3.bindGroupLayout, numTokBindGroupLayout],
         siluMulShader,
-        { L },
+        { N1 },
         "silu_mul"
       );
     }
@@ -85,7 +92,7 @@ export default class SwiGLUBlock extends Block {
     ], "outMLPGroup");
     if (!this.matmul3) {
       this.matmul3 = this.createPipeline(
-        [bg4.bindGroupLayout],
+        [bg4.bindGroupLayout, numTokBindGroupLayout],
         matmulShader,
         { M, K: K2, N: N2 },
         "matmul_swiglu"
@@ -96,30 +103,30 @@ export default class SwiGLUBlock extends Block {
     const passes: PassConfig[] = [
       {
         pipeline: this.matmul1!,
-        bindGroups: [bg1.bindGroup],
+        bindGroups: [bg1.bindGroup, numTokBindGroup],
         numWorkgroups: [
-          Math.ceil(M / 16),
+          (numTokens) => Math.ceil(numTokens / 16),
           Math.ceil(N1 / 16)
         ]
       },
       {
         pipeline: this.matmul2!,
-        bindGroups: [bg2.bindGroup],
+        bindGroups: [bg2.bindGroup, numTokBindGroup],
         numWorkgroups: [
-          Math.ceil(M / 16),
+          (numTokens) => Math.ceil(numTokens / 16),
           Math.ceil(N1 / 16)
         ]
       },
       {
         pipeline: this.siluMul!,
-        bindGroups: [bg3.bindGroup],
-        numWorkgroups: [Math.ceil(L / 64)]
+        bindGroups: [bg3.bindGroup, numTokBindGroup],
+        numWorkgroups: [(numTokens) => Math.ceil(numTokens * N1 / 64)]
       },
       {
         pipeline: this.matmul3!,
-        bindGroups: [bg4.bindGroup],
+        bindGroups: [bg4.bindGroup, numTokBindGroup],
         numWorkgroups: [
-          Math.ceil(M / 16),
+          (numTokens) => Math.ceil(numTokens / 16),
           Math.ceil(N2 / 16)
         ]
       }

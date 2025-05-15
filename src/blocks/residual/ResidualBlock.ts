@@ -14,6 +14,7 @@ export default class ResidualBlock extends Block {
 
     newInstance(
         hiddenBuffer: GPUBuffer,    // Output of the preceding block (e.g., Attention or SwiGLU)
+        numTokensBuffer: GPUBuffer,
         residualBuffer: GPUBuffer,  // Input that was fed *into* the preceding block
         embeddingSize: number,
         contextLength: number
@@ -46,6 +47,12 @@ export default class ResidualBlock extends Block {
         const { bindGroup: outputBindGroup, bindGroupLayout: outputBindGroupLayout } =
             this.createBindGroup(outputBindings, 'ResidualOutputGroup');
 
+        const numTokBindGroupConfig: BindingConfig[] = [
+            { buffer: numTokensBuffer, bufferType: "uniform" }
+        ];
+        const { bindGroup: numTokBindGroup, bindGroupLayout: numTokBindGroupLayout } 
+            = this.createBindGroup(numTokBindGroupConfig, "numTokBuf");
+
         // --- 3. Define Shader Constants ---
         const constants = {
             embedding_size: embeddingSize,
@@ -55,7 +62,7 @@ export default class ResidualBlock extends Block {
         // --- 4. Create Compute Pipeline (Cache if possible) ---
         if (!this.pipeline) {
             this.pipeline = this.createPipeline(
-                [inputBindGroupLayout, outputBindGroupLayout], // Layouts for Group 0 and Group 1
+                [inputBindGroupLayout, outputBindGroupLayout, numTokBindGroupLayout], // Layouts for Group 0 and Group 1
                 shaderCode,
                 constants,
                 "residual"
@@ -69,7 +76,7 @@ export default class ResidualBlock extends Block {
 
         const passConfig: PassConfig = {
             pipeline: this.pipeline!,
-            bindGroups: [inputBindGroup, outputBindGroup],
+            bindGroups: [inputBindGroup, outputBindGroup, numTokBindGroup],
             // Calculate workgroups dynamically based on actual token count if needed
             numWorkgroups: [(numTokens: number) => Math.ceil((numTokens * embeddingSize) / ResidualBlock.WORKGROUP_SIZE)]
         };

@@ -9,11 +9,16 @@ override rope_theta: f32;
 @group(0) @binding(1) var<storage, read>  k    : array<f32>;
 @group(0) @binding(2) var<storage, read_write> logits : array<f32>;
 
+struct NumToksData {
+    num_tokens: u32
+}
+@group(1) @binding(0) var<uniform> num_toks_data: NumToksData;
+
 @compute @workgroup_size(8,8)
 fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
   let h = gid.x;
   let t = gid.y;
-  if (h >= num_heads || t >= context_length) { return; }
+  if (h >= num_heads || t >= num_toks_data.num_tokens) { return; }
 
   let qBase = (t * num_heads + h) * head_size;
   // compute max for numeric stability

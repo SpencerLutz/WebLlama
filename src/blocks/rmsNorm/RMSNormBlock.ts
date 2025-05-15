@@ -14,6 +14,7 @@ export default class RMSNormBlock extends Block {
 
     newInstance(
         inputBuffer: GPUBuffer, // Hidden state from previous layer
+        numTokensBuffer: GPUBuffer,
         gammaBuffer: GPUBuffer, // Learnable scaling weights
         embeddingSize: number,  // n_embd
         epsilon: number,        // norm_eps
@@ -45,6 +46,12 @@ export default class RMSNormBlock extends Block {
         const { bindGroup: outputBindGroup, bindGroupLayout: outputBindGroupLayout } =
             this.createBindGroup(outputBindings, "RmsNormOutputGroup");
 
+        const numTokBindGroupConfig: BindingConfig[] = [
+            { buffer: numTokensBuffer, bufferType: "uniform" }
+        ];
+        const { bindGroup: numTokBindGroup, bindGroupLayout: numTokBindGroupLayout } 
+            = this.createBindGroup(numTokBindGroupConfig, "numTokBuf");
+
         // --- 2. Define Shader Constants ---
         const constants = {
             embedding_size: embeddingSize,
@@ -55,7 +62,7 @@ export default class RMSNormBlock extends Block {
         // --- 3. Create Compute Pipeline (Cache if possible) ---
         if (!this.pipeline) {
             this.pipeline = this.createPipeline(
-                [inputBindGroupLayout, outputBindGroupLayout], // Order matches @group in shader
+                [inputBindGroupLayout, outputBindGroupLayout, numTokBindGroupLayout], // Order matches @group in shader
                 shaderCode,
                 constants,
                 "RMSNorm"
@@ -69,7 +76,7 @@ export default class RMSNormBlock extends Block {
 
         const passConfig: PassConfig = {
             pipeline: this.pipeline!, // Use the cached or newly created pipeline
-            bindGroups: [inputBindGroup, outputBindGroup], // Assign bind groups to their slots (0 and 1)
+            bindGroups: [inputBindGroup, outputBindGroup, numTokBindGroup], // Assign bind groups to their slots (0 and 1)
             numWorkgroups: [(numTokens: number) => Math.ceil(numTokens / RMSNormBlock.WORKGROUP_SIZE)] // Dynamic workgroup calculation based on actual input tokens
         };
 

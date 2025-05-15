@@ -11,6 +11,7 @@ export default class DeEmbedBlock extends Block {
 
   newInstance(
     inputBuffer: GPUBuffer,
+    numTokensBuffer: GPUBuffer,
     deEmbeddingsBuffers: Array<GPUBuffer>,
     embeddingSize: number,
     vocabSize: number,
@@ -53,6 +54,12 @@ export default class DeEmbedBlock extends Block {
       this.createBindGroup([{ buffer: buf, bufferType: "storage" }], "resultBuffer")
     );
 
+    const numTokBindGroupConfig: BindingConfig[] = [
+        { buffer: numTokensBuffer, bufferType: "uniform" }
+    ];
+    const { bindGroup: numTokBindGroup, bindGroupLayout: numTokBindGroupLayout } 
+        = this.createBindGroup(numTokBindGroupConfig, "numTokBuf");
+
     // 5) compile the pipeline once, using the first layouts
     const constants = {
       embedding_size: embeddingSize,
@@ -62,7 +69,7 @@ export default class DeEmbedBlock extends Block {
     };
     if (!this.pipeline) {
       this.pipeline = this.createPipeline(
-        [ inputBGs[0].bindGroupLayout, resultBGs[0].bindGroupLayout ],
+        [ inputBGs[0].bindGroupLayout, resultBGs[0].bindGroupLayout, numTokBindGroupLayout ],
         shaderCode,
         constants,
         "deEmbed"
@@ -71,13 +78,13 @@ export default class DeEmbedBlock extends Block {
 
     // 6) dispatch sizes
     const workgroupSizeX = 16, workgroupSizeY = 16;
-    const dispatchX = Math.ceil(contextLength / workgroupSizeX);
+    const dispatchX = (numTokens: number) => Math.ceil(numTokens / workgroupSizeX);
     const dispatchY = Math.ceil(chunkSize     / workgroupSizeY);
 
     // 7) one compute‐pass per chunk, binding its own result buffer
     const passes: PassConfig[] = inputBGs.map(({ bindGroup }, i) => ({
       pipeline: this.pipeline!,
-      bindGroups: [ bindGroup, resultBGs[i].bindGroup ],
+      bindGroups: [ bindGroup, resultBGs[i].bindGroup, numTokBindGroup ],
       numWorkgroups: [dispatchX, dispatchY],
     }));
 

@@ -1,6 +1,6 @@
 override embedding_size: u32;
 override chunk_size: u32;
-override context_length: u32;
+override max_context_length: u32;
 
 @group(0) @binding(0) var<storage, read> input_tokens: array<u32>;
 @group(0) @binding(1) var<storage, read> embeddings: array<f32>;
@@ -11,10 +11,15 @@ struct Metadata {
 
 @group(1) @binding(0) var<storage, read_write> result: array<f32>;
 
+struct NumToksData {
+    num_tokens: u32
+}
+@group(2) @binding(0) var<uniform> num_toks_data: NumToksData;
+
 @compute @workgroup_size(64)
 fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
     let token_idx = global_id.x;
-    if (token_idx >= context_length) {
+    if (token_idx >= num_toks_data.num_tokens) {
         return;
     }
 

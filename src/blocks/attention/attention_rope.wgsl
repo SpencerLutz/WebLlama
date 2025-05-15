@@ -9,6 +9,11 @@ override rope_theta: f32;
 @group(0) @binding(1) var<storage, read_write> k : array<f32>;
 @group(0) @binding(2) var<storage, read>         pos : array<u32>;
 
+struct NumToksData {
+    num_tokens: u32
+}
+@group(1) @binding(0) var<uniform> num_toks_data: NumToksData;
+
 // rotate a 2-dim subvector by 90°
 fn rotate2(v: vec2<f32>) -> vec2<f32> { return vec2<f32>(-v.y, v.x); }
 
@@ -16,7 +21,7 @@ fn rotate2(v: vec2<f32>) -> vec2<f32> { return vec2<f32>(-v.y, v.x); }
 fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
   let t = gid.x;
   let h = gid.y;
-  if (t >= context_length || h >= num_heads) { return; }
+  if (t >= num_toks_data.num_tokens || h >= num_heads) { return; }
 
   // each head-vector is head_size long
   let base = (t * num_heads + h) * head_size;

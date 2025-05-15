@@ -11,11 +11,16 @@ struct Metadata { chunk_index: u32 }
 // now each chunk’s result buffer is only [context_length * chunk_size]
 @group(1) @binding(0) var<storage, read_write> result: array<f32>;
 
+struct NumToksData {
+    num_tokens: u32
+}
+@group(2) @binding(0) var<uniform> num_toks_data: NumToksData;
+
 @compute @workgroup_size(16, 16)
 fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
   let row = gid.x;
   let col = gid.y;
-  if (row >= context_length || col >= chunk_size) {
+  if (row >= num_toks_data.num_tokens || col >= chunk_size) {
     return;
   }
 

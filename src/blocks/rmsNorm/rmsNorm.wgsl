@@ -11,12 +11,17 @@ override context_length: u32; // Sequence length
 // Group 1: Output Buffer
 @group(1) @binding(0) var<storage, read_write> result_buffer: array<f32>; // Output normalized hidden state [context_length, embedding_size]
 
+struct NumToksData {
+    num_tokens: u32
+}
+@group(2) @binding(0) var<uniform> num_toks_data: NumToksData;
+
 @compute @workgroup_size(64)
 fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
     let token_idx = global_id.x; // Each invocation handles one token position in the sequence
 
     // Boundary check
-    if (token_idx >= context_length) {
+    if (token_idx >= num_toks_data.num_tokens) {
         return;
     }
 
