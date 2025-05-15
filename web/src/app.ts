@@ -59,7 +59,7 @@ export class WebLlamaApp {
             const chatHistory = this.chatHistory.getFormattedHistory();
             
             // Implement inference logic with complete chat history
-            const tokGenerator = this.model.generate(chatHistory, 2);
+            const tokGenerator = this.model.generate(chatHistory, 1);
             let response = "";
             
             // Update the message as new tokens arrive

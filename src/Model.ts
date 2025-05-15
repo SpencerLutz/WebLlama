@@ -248,10 +248,15 @@ export class Model {
             const positions = Array.from({ length: inputTokens.length }, (_, k) => k)
 
             // TODO: KV Cache
-            const logits = await this.run(inputTokens, positions);
+            const numInputTokens = inputTokens.length;
+            this.device!.queue.writeBuffer(this.numTokensBuffer!, 0, new Uint32Array([numInputTokens]));
+
+            const allLogits = await this.run(inputTokens, positions);
+            const lastTokenLogitsOffset = (numInputTokens - 1) * this.params!.vocab_size;
+            const lastTokenLogits = allLogits.slice(lastTokenLogitsOffset, lastTokenLogitsOffset + this.params!.vocab_size);
 
             // TODO: Implement top-p sampling? Llama often uses it.
-            const { topKIndices, topKProbs } = selectTopK(logits, top_k);
+            const { topKIndices, topKProbs } = selectTopK(lastTokenLogits, top_k);
             console.log(`indicies ${topKIndices}`);
             const topKProbs_float = new Float32Array(topKProbs);
             const idx_next = topKIndices[sampleFromLogits(topKProbs_float, temperature)];
@@ -290,6 +295,8 @@ export class Model {
         }
 
         this.device!.queue.submit([commandEncoder.finish()]);
+
+        await this.device!.queue.onSubmittedWorkDone(); 
 
         const finalArray = await this.gatherTiledResultsWithCopy(
             this.device!,
@@ -548,40 +555,82 @@ export class Model {
     }
 
 
-    async loadEmbeddings(params: ModelParams, weightsFolder: string) {
-        console.log("Loading token embeddings...");
-        const embeddingWeights = await fetchBin(`${weightsFolder}/tok_embeddings.weight.bin`);
+    async loadEmbeddings(params: ModelParams, weightsFolder: string): Promise<{ embeddingsBuffers: GPUBuffer[], deEmbeddingsBuffers: GPUBuffer[] }> {
+        console.log("Loading token embeddings (tok_embeddings.weight.bin)...");
+        const embeddingWeights = await fetchBin(`${weightsFolder}/tok_embeddings.weight.bin`); // Float32Array of all embeddings [vocab_size * n_embd]
 
-        // Chunks are stored in row-major order and are of dimensions n_embd x vocab_chunk_size.
-        // Embedding weights are imported in column-major order and are of dimensions vocab_size x n_embd.
-        // We pre-transpose the chunk for the deEmbedding process for the matmul. Could do this on GPU later.
-        const embeddingsBuffers: GPUBuffer[] = [];
-        const deEmbeddingsBuffers: GPUBuffer[] = [];
-        for (let i = 0; i < params.vocab_chunk_instances; i++) {
-            console.log(`Loading deEmbedding chunk ${i + 1}/${params.vocab_chunk_instances}...`);
-            const offset = i * params.vocab_chunk_size;
-            let size = params.vocab_chunk_size;
-
-            const paddedArray = new Float32Array(params.vocab_chunk_size * params.n_embd);
-            if (i === params.vocab_chunk_instances - 1) {
-                size = params.vocab_size - offset;
-                // First set the actual data
-                paddedArray.set(embeddingWeights.subarray(offset * params.n_embd, offset * params.n_embd + size * params.n_embd));
-                // Then set the zeros for padding at the correct offset
-                paddedArray.set(
-                    zeros((params.vocab_chunk_size - size) * params.n_embd), 
-                    size * params.n_embd  // offset where to start writing zeros
-                );
-            } else {
-                paddedArray.set(embeddingWeights.subarray(offset * params.n_embd, offset * params.n_embd + size * params.n_embd));
-            }
-
-            embeddingsBuffers.push(this.initTensor(paddedArray, [params.vocab_chunk_size, params.n_embd], ["storage", "copy_src"]));
-
-            const chunk = transpose(paddedArray, params.vocab_chunk_size, params.n_embd); // Use GPU perhaps?
-            deEmbeddingsBuffers.push(this.initTensor(chunk, [params.n_embd, params.vocab_chunk_size], ["storage"]));
+        if (!embeddingWeights || embeddingWeights.length === 0) {
+            throw new Error("Failed to load or embeddingWeights is empty from tok_embeddings.weight.bin");
+        }
+        if (embeddingWeights.length !== params.vocab_size * params.n_embd) {
+            console.warn(`Embedding weights size mismatch: Expected ${params.vocab_size * params.n_embd}, Got ${embeddingWeights.length}`);
+            // Potentially throw an error here if the mismatch is critical
         }
 
+
+        const embeddingsBuffers: GPUBuffer[] = [];
+        const deEmbeddingsBuffers: GPUBuffer[] = [];
+
+        for (let i = 0; i < params.vocab_chunk_instances; i++) {
+            const chunk_vocab_offset = i * params.vocab_chunk_size; // Starting token ID for this chunk within the full vocabulary
+
+            // Determine the number of actual tokens from the vocabulary that fall into this chunk
+            let num_actual_tokens_in_chunk = params.vocab_chunk_size;
+            if (chunk_vocab_offset + num_actual_tokens_in_chunk > params.vocab_size) {
+                num_actual_tokens_in_chunk = params.vocab_size - chunk_vocab_offset;
+            }
+            
+            // Ensure num_actual_tokens_in_chunk is not negative or zero if it's not the very end of padding.
+            if (num_actual_tokens_in_chunk <= 0 && chunk_vocab_offset < params.vocab_size) {
+                 console.warn(`Chunk ${i} has no actual tokens but is not beyond vocab_size. Offset: ${chunk_vocab_offset}, Vocab Size: ${params.vocab_size}`);
+                 // This case should ideally not happen with correct chunking logic.
+            }
+
+            // Prepare the padded array for the current chunk for the EmbedBlock
+            // This buffer will have dimensions [params.vocab_chunk_size, params.n_embd]
+            const paddedArrayForEmbed = new Float32Array(params.vocab_chunk_size * params.n_embd); // Zero-initialized
+
+            if (num_actual_tokens_in_chunk > 0) {
+                // Calculate the slice from the main embeddingWeights tensor
+                const source_start_index = chunk_vocab_offset * params.n_embd;
+                const source_end_index = (chunk_vocab_offset + num_actual_tokens_in_chunk) * params.n_embd;
+                
+                if (source_end_index > embeddingWeights.length) {
+                    console.error(`Error slicing embeddingWeights: end index ${source_end_index} is out of bounds for length ${embeddingWeights.length}. Chunk ${i}`);
+                    // Handle error, perhaps by filling with zeros or throwing
+                } else {
+                    const source_data_for_chunk = embeddingWeights.subarray(source_start_index, source_end_index);
+                     // Copy the actual token data into the start of the zero-initialized paddedArrayForEmbed
+                    paddedArrayForEmbed.set(source_data_for_chunk, 0);
+                }
+            }
+            // Any remaining part of paddedArrayForEmbed (if num_actual_tokens_in_chunk < params.vocab_chunk_size)
+            // correctly remains zero, serving as padding for the chunk's dimensions.
+
+            embeddingsBuffers.push(
+                this.initTensor(
+                    paddedArrayForEmbed,
+                    [params.vocab_chunk_size, params.n_embd], // Shape of one chunk for EmbedBlock
+                    ["storage", "copy_src"],
+                    true, // mapAtCreation
+                    'float32'
+                )
+            );
+
+            // For deEmbeddingsBuffers (transposed version of paddedArrayForEmbed)
+            // The DeEmbedBlock shader expects weights shaped [params.n_embd, params.vocab_chunk_size]
+            const transposedPaddedArray = transpose(paddedArrayForEmbed, params.vocab_chunk_size, params.n_embd);
+            deEmbeddingsBuffers.push(
+                this.initTensor(
+                    transposedPaddedArray,
+                    [params.n_embd, params.vocab_chunk_size], // Shape for DeEmbedBlock
+                    ["storage"], // Typically read-only for weights
+                    true, // mapAtCreation
+                    'float32'
+                )
+            );
+            console.log(`Loaded and processed embedding chunk ${i+1}/${params.vocab_chunk_instances}. Actual tokens in chunk: ${num_actual_tokens_in_chunk}`);
+        }
         return { embeddingsBuffers, deEmbeddingsBuffers };
     }
     
