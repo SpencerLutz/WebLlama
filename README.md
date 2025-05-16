@@ -51,6 +51,21 @@ The following instruction can be used to run and reproduce the project locally o
 4.  Install node packages
     ```
     npm i
+5. Install huggingface_hub python package
+    ```
+    pip3 install huggingface_hub
+6.  Use this command with your huggingface token (HF_TOKEN) to download Llama3.2-1B
+    ```
+    huggingface-cli download meta-llama/Llama-3.2-1B --include "original/*" --local-dir Llama-3.2-1B
+7. Use the provided convert.py script to extract weights 
+    ```
+    python3 convert.py
+8. After getting the weights directory, move it into web subfolder
+    ```
+    mv weights web/
+9. Download the model config.json into web/weights
+    ```
+    wget https://huggingface.co/meta-llama/Llama-3.2-1B/raw/main/config.json -O ./web/weights/config.json
 5.  Start HTTP server
     ```
     npm run dev
