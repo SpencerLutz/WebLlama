@@ -1,7 +1,6 @@
 import { Block } from "../Block";
 import { BindingConfig, PassConfig } from "../../types";
 
-// import raw WGSL shaders
 import qkvShader from "./attention_qkv.wgsl?raw";
 import ropeShader from "./attention_rope.wgsl?raw";
 import attnShader from "./attention_qk_softmax.wgsl?raw";
@@ -32,7 +31,6 @@ export default class AttentionBlock extends Block {
     ropeTheta: number,
     contextLength: number
   ): { resultBuffer: GPUBuffer; passes: PassConfig[] } {
-    // 1) allocate intermediate buffers
     const qBuffer     = this.createBuffer([contextLength, numHeads * headSize], ["storage"], "qBuffer");
     const kBuffer     = this.createBuffer([contextLength, numKVHeads * headSize], ["storage"], "kBuffer");
     const vBuffer     = this.createBuffer([contextLength, numKVHeads * headSize], ["storage"], "vBuffer");
@@ -41,7 +39,6 @@ export default class AttentionBlock extends Block {
     const outContext2  = this.createBuffer([contextLength, numHeads * headSize], ["storage"], "outContext2");
     const resultBuffer = this.createBuffer([contextLength, numHeads * headSize], ["storage", "copy_src"], "resultBuffer_attn");
 
-    // 2) QKV projection pass
     const qkvBinds: BindingConfig[] = [
       { buffer: inputBuffer,  bufferType: "read-only-storage" },
       { buffer: qWeights,     bufferType: "read-only-storage" },
@@ -54,7 +51,6 @@ export default class AttentionBlock extends Block {
     const { bindGroup: qkvGroup, bindGroupLayout: qkvLayout } 
       = this.createBindGroup(qkvBinds, "qkv");
 
-    // 3) RoPE pass
     const ropeBinds: BindingConfig[] = [
       { buffer: qBuffer,    bufferType: "storage" },
       { buffer: kBuffer,    bufferType: "storage" },
@@ -63,7 +59,6 @@ export default class AttentionBlock extends Block {
     const { bindGroup: ropeGroup, bindGroupLayout: ropeLayout }
       = this.createBindGroup(ropeBinds, "rope");
 
-    // 4) Attention + softmax pass
     const attnBinds: BindingConfig[] = [
       { buffer: qBuffer,   bufferType: "read-only-storage" },
       { buffer: kBuffer,   bufferType: "read-only-storage" },
@@ -72,7 +67,6 @@ export default class AttentionBlock extends Block {
     const { bindGroup: attnGroup, bindGroupLayout: attnLayout }
       = this.createBindGroup(attnBinds, "attn");
 
-    // 5) Weighted sum pass (attn × V)
     const outBinds1: BindingConfig[] = [
       { buffer: attnBuffer, bufferType: "read-only-storage" },
       { buffer: vBuffer,    bufferType: "read-only-storage" },
@@ -81,7 +75,6 @@ export default class AttentionBlock extends Block {
     const { bindGroup: outGroup1, bindGroupLayout: outLayout1 }
       = this.createBindGroup(outBinds1, "weightedSum");
 
-    // 6) Output projection pass
     const outBinds2: BindingConfig[] = [
       { buffer: outContext2, bufferType: "read-only-storage" },
       { buffer: oWeights,   bufferType: "read-only-storage" },
@@ -96,7 +89,6 @@ export default class AttentionBlock extends Block {
     const { bindGroup: numTokBindGroup, bindGroupLayout: numTokBindGroupLayout } 
         = this.createBindGroup(numTokBindGroupConfig, "numTokBuf");
 
-    // compile pipelines once
     const constants = {
       embedding_size:    embeddingSize,
       num_heads:         numHeads,
@@ -121,7 +113,6 @@ export default class AttentionBlock extends Block {
       );
     }
 
-    // build PassConfig list
     const passes: PassConfig[] = [
       { pipeline: this.qkvPipeline!, bindGroups: [qkvGroup, numTokBindGroup],      numWorkgroups: [l => l, numHeads] },
       { pipeline: this.ropePipeline!, bindGroups: [ropeGroup, numTokBindGroup],    numWorkgroups: [l => l, numHeads] },

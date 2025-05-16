@@ -20,8 +20,8 @@ struct NumToksData {
 
 @compute @workgroup_size(8,8)
 fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
-  let t = gid.x;          // token index
-  let h = gid.y;          // head index (for Q) or kv-head for K/V
+  let t = gid.x;
+  let h = gid.y;
   if (t >= num_toks_data.num_tokens) { return; }
 
   // Q projection

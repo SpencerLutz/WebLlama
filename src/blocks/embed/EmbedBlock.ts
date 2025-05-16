@@ -3,8 +3,6 @@ import { BindingConfig, PassConfig } from "../../types";
 import shaderCode from "./embed.wgsl?raw";
 
 export default class EmbedBlock extends Block {
-    /* Only caching 1 pipeline because each one has
-    the same bindGroupLayout, shader, and constants */
     private pipeline?: GPUComputePipeline
 
     constructor(device: GPUDevice) {

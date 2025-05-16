@@ -28,10 +28,10 @@ export default class SwiGLUBlock extends Block {
     const L = M * N1;
     const K2 = intermediateSize, N2 = embeddingSize;
 
-    // allocate intermediate + output buffers
+    
     const gateBuffer = this.createBuffer([M, N1], ['storage', 'copy_src'], "gateBuffer");
     const upBuffer   = this.createBuffer([M, N1], ['storage', 'copy_src'], "upBuffer");
-    // reuse gateBuffer for activated
+    
     const resultBuffer = this.createBuffer([M, N2], ['storage', 'copy_src'], "resultBuffer_mlp");
 
     const numTokBindGroupConfig: BindingConfig[] = [
@@ -40,7 +40,6 @@ export default class SwiGLUBlock extends Block {
     const { bindGroup: numTokBindGroup, bindGroupLayout: numTokBindGroupLayout } 
         = this.createBindGroup(numTokBindGroupConfig, "numTokBuf");
 
-    // 1) input × W1 → gateBuffer
     const bg1 = this.createBindGroup([
       { buffer: inputBuffer, bufferType: 'read-only-storage' },
       { buffer: w1WeightsBuffer, bufferType: 'read-only-storage' },
@@ -55,7 +54,6 @@ export default class SwiGLUBlock extends Block {
       );
     }
 
-    // 2) input × W3 → upBuffer
     const bg2 = this.createBindGroup([
       { buffer: inputBuffer, bufferType: 'read-only-storage' },
       { buffer: w3WeightsBuffer, bufferType: 'read-only-storage' },
@@ -70,7 +68,6 @@ export default class SwiGLUBlock extends Block {
       );
     }
 
-    // 3) silu(gate) * up → gateBuffer
     const bg3 = this.createBindGroup([
       { buffer: gateBuffer, bufferType: 'storage' },
       { buffer: upBuffer,   bufferType: 'read-only-storage' }
@@ -84,7 +81,6 @@ export default class SwiGLUBlock extends Block {
       );
     }
 
-    // 4) activated (in gateBuffer) × W2 → resultBuffer
     const bg4 = this.createBindGroup([
       { buffer: gateBuffer, bufferType: 'read-only-storage' },
       { buffer: w2WeightsBuffer, bufferType: 'read-only-storage' },
@@ -99,7 +95,6 @@ export default class SwiGLUBlock extends Block {
       );
     }
 
-    // build passes
     const passes: PassConfig[] = [
       {
         pipeline: this.matmul1!,

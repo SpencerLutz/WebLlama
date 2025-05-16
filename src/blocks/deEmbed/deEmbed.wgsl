@@ -1,14 +1,13 @@
 override embedding_size: u32;
 override chunk_size:     u32;
 override context_length: u32;
-override vocab_size:     u32; // still needed to compute dot but not for indexing
+override vocab_size:     u32;
 
-@group(0) @binding(0) var<storage, read> hidden:  array<f32>; // [context_length * embedding_size]
-@group(0) @binding(1) var<storage, read> deEmbed: array<f32>; // [embedding_size * chunk_size]
+@group(0) @binding(0) var<storage, read> hidden:  array<f32>;
+@group(0) @binding(1) var<storage, read> deEmbed: array<f32>;
 struct Metadata { chunk_index: u32 }
-@group(0) @binding(2) var<uniform> metadata: Metadata;
 
-// now each chunk’s result buffer is only [context_length * chunk_size]
+@group(0) @binding(2) var<uniform> metadata: Metadata;
 @group(1) @binding(0) var<storage, read_write> result: array<f32>;
 
 struct NumToksData {

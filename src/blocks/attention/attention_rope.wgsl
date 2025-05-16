@@ -14,7 +14,6 @@ struct NumToksData {
 }
 @group(1) @binding(0) var<uniform> num_toks_data: NumToksData;
 
-// rotate a 2-dim subvector by 90°
 fn rotate2(v: vec2<f32>) -> vec2<f32> { return vec2<f32>(-v.y, v.x); }
 
 @compute @workgroup_size(8,8)
@@ -23,7 +22,6 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
   let h = gid.y;
   if (t >= num_toks_data.num_tokens || h >= num_heads) { return; }
 
-  // each head-vector is head_size long
   let base = (t * num_heads + h) * head_size;
   let p = f32(pos[t]);
   for(var i:u32=0; i<head_size; i+=2) {

@@ -1,4 +1,3 @@
-// input: A [M×K], B [K×N] → output C [M×N]
 override M: u32;
 override K: u32;
 override N: u32;

@@ -140,7 +140,7 @@ export class Model {
             {
                 const { resultBuffer, passes } = rmsNormBlock.newInstance(
                     residualBuffer, this.numTokensBuffer!,
-                    buffers.normAttentionGammaBuffer, // RMSNorm weights
+                    buffers.normAttentionGammaBuffer,
                     n_embd, norm_eps, n_ctx
                 );
                 hiddenBuffer = resultBuffer;
@@ -179,8 +179,8 @@ export class Model {
 
             {
                 const { resultBuffer, passes } = swiGLUBlock.newInstance(
-                    hiddenBuffer, this.numTokensBuffer!, buffers.w1WeightsBuffer, // Gate projection weights
-                    buffers.w3WeightsBuffer, buffers.w2WeightsBuffer, // Up & Down projection weights
+                    hiddenBuffer, this.numTokensBuffer!, buffers.w1WeightsBuffer,
+                    buffers.w3WeightsBuffer, buffers.w2WeightsBuffer,
                     n_embd, intermediate_size, n_ctx
                 );
                 hiddenBuffer = resultBuffer;
@@ -208,11 +208,10 @@ export class Model {
 
         {
             const { resultBuffers, passes } = deEmbedBlock.newInstance(
-                hiddenBuffer, this.numTokensBuffer!, deEmbeddingsBuffers, // Transposed embedding weights
+                hiddenBuffer, this.numTokensBuffer!, deEmbeddingsBuffers,
                 n_embd, vocab_size, vocab_chunk_size,
                 vocab_chunk_instances, n_ctx
-            ); // Output buffer: Logits [seq_length, vocab_size]
-            //hiddenBuffer = resultBuffer;
+            );
             modelPasses.push(...passes);
             finalBuffers = resultBuffers;
         }
@@ -225,12 +224,11 @@ export class Model {
         console.log
         const diffs = [];
         for (let i = 0; i < filtered.length; i += 2) {
-            // Calculate difference in nanoseconds, then convert to milliseconds
             const diffNs = Number(filtered[i + 1]) - Number(filtered[i]);
-            const diffMs = diffNs / 1_000_000; // Convert to floating-point ms
+            const diffMs = diffNs / 1_000_000;
             diffs.push(diffMs);
         }
-        return diffs; // Differences are in milliseconds (as numbers)
+        return diffs;
       }
 
     /**
@@ -247,7 +245,6 @@ export class Model {
         top_k: number = this.defaultTopK,
         temperature: number = this.defaultTemperature
     ): AsyncGenerator<string, void, undefined> {
-        // Add performance stuff back
         if (!this.initialized) {
             console.error("Model not properly initialized. Call initialize() first.");
             return;
@@ -265,11 +262,9 @@ export class Model {
             const inputTokens = history.slice(-this.params!.n_ctx);
             const positions = Array.from({ length: inputTokens.length }, (_, k) => k)
 
-            // TODO: KV Cache
             const logits = await this.run(inputTokens, positions);
             const logits_float = new Float32Array(Array.from(logits).map(Number));
 
-            // TODO: Implement top-p sampling? Llama often uses it.
             const { topKIndices, topKProbs } = selectTopK(logits_float, top_k);
             console.log(`indicies ${topKIndices}`);
             const topKProbs_float = new Float32Array(topKProbs);
@@ -332,10 +327,10 @@ export class Model {
 
         commandEncoder.resolveQuerySet(
             querySet, 
-            0,// index of first query to resolve 
-            capacity,//number of queries to resolve
+            0,
+            capacity,
             queryBuffer, 
-            0);// destination offset
+            0);
 
         this.device!.queue.submit([commandEncoder.finish()]);
 
@@ -369,13 +364,12 @@ export class Model {
         const finalArray = await this.gatherTiledResultsWithCopy(
             this.device!,
             this.device!.queue,
-            this.resultBuffers!,   // the array you returned from newInstance()
+            this.resultBuffers!,
             this.params!.n_ctx,
             this.params!.vocab_size,
             this.params!.vocab_chunk_size
           );
           
-        // `finalArray` is a Float32Array of length contextLength*vocabSize
         return finalArray;
     }
 
@@ -385,18 +379,15 @@ export class Model {
         source: GPUBuffer,
         sizeBytes: number
       ): Promise<BigInt64Array> {
-        // 1. staging buffer for READ
         const staging = device.createBuffer({
           size: sizeBytes,
           usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST,
         });
       
-        // 2. copy commands
         const encoder = device.createCommandEncoder();
         encoder.copyBufferToBuffer(source, 0, staging, 0, sizeBytes);
         queue.submit([encoder.finish()]);
       
-        // 3. map & read
         await staging.mapAsync(GPUMapMode.READ);
         const arrayBuffer = staging.getMappedRange();
         const data = new BigInt64Array(arrayBuffer).slice();
@@ -419,7 +410,6 @@ export class Model {
         const bytesPerChunk = contextLength * chunkSize * 4;
       
         for (let chunkIdx = 0; chunkIdx < numChunks; chunkIdx++) {
-          // read this chunk via a staging copy
           const chunkData = await this.readBufferData(
             device,
             queue,
@@ -427,7 +417,6 @@ export class Model {
             bytesPerChunk
           );
       
-          // scatter into global output
           for (let i = 0, L = chunkData.length; i < L; i++) {
             const row = Math.floor(i / chunkSize);
             const col = i % chunkSize;
@@ -440,10 +429,6 @@ export class Model {
       }     
       
 
-
-    // --- Model Loading Functions ---
-
-    // Loads the model weights into GPU buffers
     async loadModelWeights(weightsFolder: string, params: ModelParams): Promise<[LoadedModelBuffers, ModelParams]> {
         if (!this.device) throw new Error("Device not initialized for model loading.");
         if (this.initialized) {
@@ -453,20 +438,17 @@ export class Model {
 
         console.log("Loading Llama3 model weights from:", weightsFolder);
 
-        // Load Token Embeddings (and prepare for DeEmbedding/Output Projection)
         console.log(" Loading token embeddings (tok_embeddings.weight.bin)...");
         const { embeddingsBuffers, deEmbeddingsBuffers } = await this.loadEmbeddings(params, weightsFolder);
 
-        // Load Transformer Layers
         console.log(" Loading transformer layers...");
         const layer_buffers = await this.loadLayers(params, weightsFolder);
 
-        // Load Final Layer Norm (RMSNorm)
         console.log(" Loading final layer norm (norm.weight.bin)...");
         const normGammaBuffer = await this.fetchAndInitTensor(
             `${weightsFolder}norm.weight.bin`,
             [params.n_embd],
-            ["storage"] // Read-only weight for final norm
+            ["storage"]
         );
 
         const modelBuffers = {
@@ -480,7 +462,6 @@ export class Model {
         return [modelBuffers, params];
     }
 
-    // Loads Llama3 specific parameters from config.json
     async loadLlamaParameters(weightsFolder: string): Promise<any | null> {
         try {
             console.log("Loading Llama parameters from config.json...");
@@ -497,7 +478,6 @@ export class Model {
         }
     }
 
-    // Maps loaded Llama3 parameters and calculates derived values
     deriveInternalParams(llamaParams: any, contextSize: number): ModelParams {
         if (!this.device) throw new Error("Device not initialized for parameter derivation.");
 
@@ -509,7 +489,7 @@ export class Model {
         const intermediate_size = llamaParams.intermediate_size;
         const norm_eps = llamaParams.rms_norm_eps;
         const head_size = llamaParams.head_dim || n_embd / n_head;
-        const rope_theta = llamaParams.rope_theta || 10000.0; // Default if not specified
+        const rope_theta = llamaParams.rope_theta || 10000.0;
 
         if (n_embd % n_head !== 0) {
             console.warn(`Warning: hidden_size (${n_embd}) is not perfectly divisible by num_attention_heads (${n_head}).`);
@@ -521,13 +501,11 @@ export class Model {
         const n_ctx = Math.min(contextSize, llamaParams.max_position_embeddings || contextSize);
         console.log(` Using context size (n_ctx): ${n_ctx}`);
 
-        // Calculate vocab chunk size if DeEmbedding needs chunking
         const { vocab_chunk_size, vocab_chunk_instances } = this.calculateVocabChunking(
                 vocab_size, n_embd, this.device.limits.maxStorageBufferBindingSize
             );
 
 
-        // --- Final Parameter Object ---
         const params: ModelParams = {
             n_embd,
             n_layer,
@@ -543,23 +521,19 @@ export class Model {
             vocab_chunk_instances,
         };
 
-        // --- Parameter Size Checks (Optional but recommended) ---
         this.checkBufferLimits(params);
 
         console.log("Derived Internal Params:", params);
         return params;
     }
 
-    // Calculates if vocab needs chunking for DeEmbedding and the chunk parameters
     calculateVocabChunking(vocab_size: number, n_embd: number, maxBindingSize: number): { vocab_chunk_size: number, vocab_chunk_instances: number } {
-        // DeEmbedding matmul uses transposed weights [n_embd, vocab_size]
         const deEmbedSizeBytes = this.bufferSize(n_embd, vocab_size);
         let vocab_chunk_size = vocab_size;
         let vocab_chunk_instances = 1;
 
         if (deEmbedSizeBytes > maxBindingSize) {
             console.warn(`DeEmbedding buffer size (${deEmbedSizeBytes} B) exceeds maxStorageBufferBindingSize (${maxBindingSize} B). Splitting required.`);
-            // Calculate minimum splits needed based on bytes per vocab item in the transposed matrix
             const bytesPerVocabItem = n_embd * Float32Array.BYTES_PER_ELEMENT;
             const maxVocabItemsPerChunk = Math.floor(maxBindingSize / bytesPerVocabItem);
 
@@ -569,24 +543,21 @@ export class Model {
 
             vocab_chunk_instances = Math.ceil(vocab_size / maxVocabItemsPerChunk);
             vocab_chunk_size = Math.ceil(vocab_size / vocab_chunk_instances);
-            // Ensure alignment if needed (e.g., align to 4 or 8 for vectorization)
+
             const alignment = 8;
             vocab_chunk_size = Math.ceil(vocab_chunk_size / alignment) * alignment;
-            // Recalculate instances based on aligned chunk size
             vocab_chunk_instances = Math.ceil(vocab_size / vocab_chunk_size);
 
             console.log(` Calculated DeEmbedding Chunks: instances=${vocab_chunk_instances}, chunk_size (tokens)=${vocab_chunk_size}`);
 
-            // Sanity check the recalculated chunk size
             const chunkSizeBytes = this.bufferSize(n_embd, vocab_chunk_size);
             if (chunkSizeBytes > maxBindingSize) {
                 console.error(`Error: Calculated chunk size ${vocab_chunk_size} still results in buffer size ${chunkSizeBytes} exceeding limit ${maxBindingSize}.`);
-                // This indicates a potential logic error in calculation.
                 throw new Error("Failed to calculate valid vocab chunk size.");
             }
         } else {
             console.log(`DeEmbedding buffer size (${deEmbedSizeBytes} B) fits within limits. No chunking applied.`);
-            // Align vocab_size if needed, even if not chunking, might help shader performance
+
             const alignment = 8;
             vocab_chunk_size = Math.ceil(vocab_size / alignment) * alignment;
             if(vocab_chunk_size !== vocab_size) {
@@ -596,7 +567,6 @@ export class Model {
         return { vocab_chunk_size, vocab_chunk_instances };
     }
 
-    // Optional: Check common large buffer sizes against limits
     checkBufferLimits(params: ModelParams): void {
         if (!this.device) return;
         const maxStorageElements = this.device.limits.maxStorageBufferBindingSize / Float32Array.BYTES_PER_ELEMENT;
@@ -608,18 +578,14 @@ export class Model {
             }
         };
 
-        // Check individual weights
         check("Attention Q/O Weight", params.n_embd * params.n_embd);
         check("Attention K/V Weight", params.n_kv_head * params.head_size * params.n_embd);
         check("MLP W1/W3 Weight", params.intermediate_size * params.n_embd);
         check("MLP W2 Weight", params.n_embd * params.intermediate_size);
-        check("Token Embedding", params.vocab_size * params.n_embd, maxTotalElements); // Check against maxBufferSize
+        check("Token Embedding", params.vocab_size * params.n_embd, maxTotalElements);
 
-        // Check intermediate activation tensors (can be large)
         check("Activations (Hidden State)", params.n_ctx * params.n_embd);
         check("Activations (MLP Intermediate)", params.n_ctx * params.intermediate_size);
-        // Attention scores (n_ctx * n_ctx * n_head) - can be very large, often computed tile-by-tile
-        // check("Attention Scores (Full)", params.n_ctx * params.n_ctx * params.n_head);
     }
 
 
@@ -627,9 +593,6 @@ export class Model {
         console.log("Loading token embeddings...");
         const embeddingWeights = await fetchBin(`${weightsFolder}/tok_embeddings.weight.bin`);
 
-        // Chunks are stored in row-major order and are of dimensions n_embd x vocab_chunk_size.
-        // Embedding weights are imported in column-major order and are of dimensions vocab_size x n_embd.
-        // We pre-transpose the chunk for the deEmbedding process for the matmul. Could do this on GPU later.
         const embeddingsBuffers: GPUBuffer[] = [];
         const deEmbeddingsBuffers: GPUBuffer[] = [];
         for (let i = 0; i < params.vocab_chunk_instances; i++) {
@@ -640,12 +603,11 @@ export class Model {
             const paddedArray = new Float32Array(params.vocab_chunk_size * params.n_embd);
             if (i === params.vocab_chunk_instances - 1) {
                 size = params.vocab_size - offset;
-                // First set the actual data
                 paddedArray.set(embeddingWeights.subarray(offset * params.n_embd, offset * params.n_embd + size * params.n_embd));
-                // Then set the zeros for padding at the correct offset
+
                 paddedArray.set(
                     zeros((params.vocab_chunk_size - size) * params.n_embd), 
-                    size * params.n_embd  // offset where to start writing zeros
+                    size * params.n_embd
                 );
             } else {
                 paddedArray.set(embeddingWeights.subarray(offset * params.n_embd, offset * params.n_embd + size * params.n_embd));
@@ -653,7 +615,7 @@ export class Model {
 
             embeddingsBuffers.push(this.initTensor(paddedArray, [params.vocab_chunk_size, params.n_embd], ["storage", "copy_src"]));
 
-            const chunk = transpose(paddedArray, params.vocab_chunk_size, params.n_embd); // Use GPU perhaps?
+            const chunk = transpose(paddedArray, params.vocab_chunk_size, params.n_embd);
             deEmbeddingsBuffers.push(this.initTensor(chunk, [params.n_embd, params.vocab_chunk_size], ["storage"]));
         }
 
@@ -680,7 +642,6 @@ export class Model {
         const prefix = `${weightsFolder}layers.${layerIndex}.`;
         const { n_embd, intermediate_size, n_head, n_kv_head, head_size } = params;
 
-        // Define dimensions based on Llama parameters (weights are often stored [out_features, in_features])
         const qDim = [n_embd, n_embd]; // Wq maps input [n_embd] -> output [n_heads * head_dim = n_embd]
         const kDim = [n_kv_head * head_size, n_embd]; // Wk maps input [n_embd] -> output [n_kv_heads * head_dim]
         const vDim = [n_kv_head * head_size, n_embd]; // Wv maps input [n_embd] -> output [n_kv_heads * head_dim]
@@ -705,7 +666,6 @@ export class Model {
         this.fetchAndInitTensor(`${prefix}feed_forward.w2.weight.bin`, w2Dim, ["storage"]), // down_proj
         ];
 
-        // Wait for all tensors in this layer to be fetched and initialized
         const [
             normAttentionGammaBuffer,
             qWeightsBuffer,
@@ -743,7 +703,6 @@ export class Model {
         if (!this.device) throw new Error("Device not initialized");
         console.log(`  Fetching ${url}...`);
         try {
-            // Assuming fetchBin returns Float32Array always, adjust if it can return other types
             const rawData = await fetchBin(url);
             let data: Float32Array | Int32Array;
             const bytesPerElement = isInt32 ? Int32Array.BYTES_PER_ELEMENT : Float32Array.BYTES_PER_ELEMENT;
@@ -771,26 +730,25 @@ export class Model {
         data: Float32Array | Int32Array,
         dims: readonly number[],
         usageOps: Array<UsageString>,
-        mapAtCreation: boolean = true, // Default to mapping for weights/inputs
-        dataType: 'float32' | 'int32' = 'float32' // Explicit type for clarity
+        mapAtCreation: boolean = true,
+        dataType: 'float32' | 'int32' = 'float32'
     ): GPUBuffer {
         if (!this.device) throw new Error("Device not initialized");
 
         const bytesPerElement = dataType === 'int32' ? Int32Array.BYTES_PER_ELEMENT : Float32Array.BYTES_PER_ELEMENT;
         const elementCount = dims.reduce((a, b) => a * b, 1);
         const unalignedSize = elementCount * bytesPerElement;
-        const bufferSizeBytes = this.bufferSize(...dims, bytesPerElement); // Pass bytesPerElement
+        const bufferSizeBytes = this.bufferSize(...dims, bytesPerElement);
 
         if (data.byteLength !== unalignedSize) {
             console.warn(`Data size (${data.byteLength}) != expected unaligned size (${unalignedSize}) for dims [${dims.join(', ')}]. Ensure data type matches.`);
         }
         if (data.byteLength > bufferSizeBytes) {
             console.warn(`Data size (${data.byteLength}) > calculated aligned buffer size (${bufferSizeBytes}). Check alignment logic or data.`);
-            // Decide how to handle: truncate (dangerous) or error out?
         }
 
         const bufferDescriptor: GPUBufferDescriptor = {
-            label: `Tensor[${dims.join(',')}]_${dataType}`, // Optional label
+            label: `Tensor[${dims.join(',')}]_${dataType}`,
             size: bufferSizeBytes,
             usage: usageOps.map((usage) => bufferUsageDict[usage]).reduce((a, b) => a | b),
             mappedAtCreation: mapAtCreation,
@@ -800,36 +758,30 @@ export class Model {
         if (mapAtCreation) {
             const mappedRange = buffer.getMappedRange();
             const constructor = dataType === 'int32' ? Int32Array : Float32Array;
-            // Create a typed array view of the correct type *and size* for the source data
+
             const sourceView = data;
-            // Create a typed array view for the destination mapped range
-            // Use byteLength / bytesPerElement for the length of the destination view
             const destinationView = new constructor(mappedRange, 0, bufferSizeBytes / bytesPerElement);
 
-            // Copy the data. If padding is needed, the extra space in destinationView remains 0.
             destinationView.set(sourceView);
 
             buffer.unmap();
         } else {
-            // If not mapped at creation, queue a write operation
             this.device.queue.writeBuffer(buffer, 0, data.buffer, data.byteOffset, data.byteLength);
             console.warn(`Using queue.writeBuffer for tensor init. mappedAtCreation is generally preferred for weights.`);
         }
 
-        this.unloadDeletionStack.push(buffer); // Add to stack for later cleanup
+        this.unloadDeletionStack.push(buffer);
         return buffer;
     }
 
-    // Calculates buffer size aligned to minimum offset requirements
     bufferSize(...dimsAndBytesPerElement: readonly number[]): number {
         const bytesPerElement = dimsAndBytesPerElement[dimsAndBytesPerElement.length - 1];
         const dims = dimsAndBytesPerElement.slice(0, -1);
 
-        // If only one number provided, assume it's already the byte size
         if (dims.length === 0 && dimsAndBytesPerElement.length === 1) {
             return Math.ceil(bytesPerElement / this.minBufferOffset) * this.minBufferOffset;
         }
-        // If bytesPerElement wasn't the last arg, default to float32
+
         const actualBytesPerElement = (bytesPerElement === Int32Array.BYTES_PER_ELEMENT || bytesPerElement === Float32Array.BYTES_PER_ELEMENT)
                 ? bytesPerElement
                 : Float32Array.BYTES_PER_ELEMENT;
@@ -842,7 +794,6 @@ export class Model {
         return alignedSize;
     }
 
-    // Destroys GPU buffers created during loading
     unloadBuffers(): void {
         console.log(`Unloading ${this.unloadDeletionStack.length} GPU buffers...`);
         this.unloadDeletionStack.forEach((buffer) => {
@@ -853,8 +804,8 @@ export class Model {
             }
         });
         this.unloadDeletionStack = [];
-        this.model = undefined; // Clear model references
-        this.initialized = false; // Reset initialized status
+        this.model = undefined;
+        this.initialized = false;
         console.log("Buffers unloaded.");
     }
 }

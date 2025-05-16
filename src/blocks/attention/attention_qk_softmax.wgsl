@@ -21,7 +21,6 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
   if (h >= num_heads || t >= num_toks_data.num_tokens) { return; }
 
   let qBase = (t * num_heads + h) * head_size;
-  // compute max for numeric stability
   var m = -1e9;
   for(var s:u32=0; s<context_length; s++){
     var dotp = 0.0;
@@ -31,7 +30,7 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
     }
     m = max(m, dotp);
   }
-  // compute sum exp(...)
+
   var sumExp = 0.0;
   for(var s:u32=0; s<context_length; s++){
     let kBase = (s * num_heads + (h % num_heads)) * head_size;
@@ -43,7 +42,7 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
     sumExp += e;
     logits[(h * context_length + t)*context_length + s] = e;
   }
-  // normalize
+  
   for(var s:u32=0; s<context_length; s++){
     logits[(h * context_length + t)*context_length + s] /= sumExp;
   }
