@@ -55,7 +55,12 @@ export class Model {
             throw new Error("Failed to get GPU adapter.");
         }
         
-        this.device = await adapter.requestDevice();
+        const hasTimestampSupport = adapter.features.has('timestamp-query');
+        if (!hasTimestampSupport) {
+        console.warn("Timestamp queries are not supported on this device");
+        }
+        
+        this.device = await adapter.requestDevice({requiredFeatures: ["timestamp-query"],});
         if (!this.device) {
             throw new Error("Failed to get GPU device.");
         }
@@ -121,7 +126,7 @@ export class Model {
         console.log(embeddingsBuffers[0].size);
 
         {
-            const { passes, resultBuffer } = embedBlock.newInstance(
+            const { resultBuffer, passes } = embedBlock.newInstance(
                 this.inputBuffer!, this.numTokensBuffer!, embeddingsBuffers,
                 n_embd, vocab_chunk_size, vocab_chunk_instances, n_ctx
             );
@@ -133,7 +138,7 @@ export class Model {
             const buffers = layer_buffers[i];
 
             {
-                const { passes, resultBuffer } = rmsNormBlock.newInstance(
+                const { resultBuffer, passes } = rmsNormBlock.newInstance(
                     residualBuffer, this.numTokensBuffer!,
                     buffers.normAttentionGammaBuffer, // RMSNorm weights
                     n_embd, norm_eps, n_ctx
@@ -143,7 +148,7 @@ export class Model {
             }
 
             {
-                const { passes, resultBuffer } = attentionBlock.newInstance(
+                const { resultBuffer, passes } = attentionBlock.newInstance(
                     hiddenBuffer, this.numTokensBuffer!, this.positionBuffer!,
                     buffers.qWeightsBuffer, buffers.kWeightsBuffer,
                     buffers.vWeightsBuffer, buffers.oWeightsBuffer,
@@ -155,7 +160,7 @@ export class Model {
             }
 
             {
-                const { passes, resultBuffer } = residualBlock.newInstance(
+                const { resultBuffer, passes } = residualBlock.newInstance(
                     hiddenBuffer, this.numTokensBuffer!, residualBuffer,
                     n_embd, n_ctx
                 );
@@ -164,7 +169,7 @@ export class Model {
             }
 
             {
-                const { passes, resultBuffer } = rmsNormBlock.newInstance(
+                const { resultBuffer, passes } = rmsNormBlock.newInstance(
                     residualBuffer, this.numTokensBuffer!, buffers.normLinearGammaBuffer,
                     n_embd, norm_eps, n_ctx
                 );
@@ -173,7 +178,7 @@ export class Model {
             }
 
             {
-                const { passes, resultBuffer } = swiGLUBlock.newInstance(
+                const { resultBuffer, passes } = swiGLUBlock.newInstance(
                     hiddenBuffer, this.numTokensBuffer!, buffers.w1WeightsBuffer, // Gate projection weights
                     buffers.w3WeightsBuffer, buffers.w2WeightsBuffer, // Up & Down projection weights
                     n_embd, intermediate_size, n_ctx
@@ -183,7 +188,7 @@ export class Model {
             }
 
             {
-                const { passes, resultBuffer } = residualBlock.newInstance(
+                const { resultBuffer, passes } = residualBlock.newInstance(
                     hiddenBuffer, this.numTokensBuffer!, residualBuffer,
                     n_embd, n_ctx
                 );
@@ -193,7 +198,7 @@ export class Model {
         }
 
         {
-            const { passes, resultBuffer } = rmsNormBlock.newInstance(
+            const { resultBuffer, passes } = rmsNormBlock.newInstance(
                 residualBuffer, this.numTokensBuffer!, normGammaBuffer,
                 n_embd, norm_eps, n_ctx
             );
@@ -202,7 +207,7 @@ export class Model {
         }
 
         {
-            const { passes, resultBuffers } = deEmbedBlock.newInstance(
+            const { resultBuffers, passes } = deEmbedBlock.newInstance(
                 hiddenBuffer, this.numTokensBuffer!, deEmbeddingsBuffers, // Transposed embedding weights
                 n_embd, vocab_size, vocab_chunk_size,
                 vocab_chunk_instances, n_ctx
@@ -214,6 +219,19 @@ export class Model {
 
         return { passes: modelPasses, resultBuffer: finalBuffers };
     }
+
+    processTimestamps(bigIntArray: BigInt64Array) {
+        const filtered = Array.from(bigIntArray).filter(ts => ts !== 0n);
+        console.log
+        const diffs = [];
+        for (let i = 0; i < filtered.length; i += 2) {
+            // Calculate difference in nanoseconds, then convert to milliseconds
+            const diffNs = Number(filtered[i + 1]) - Number(filtered[i]);
+            const diffMs = diffNs / 1_000_000; // Convert to floating-point ms
+            diffs.push(diffMs);
+        }
+        return diffs; // Differences are in milliseconds (as numbers)
+      }
 
     /**
      * Yields new tokens from the prompt. 
@@ -249,9 +267,10 @@ export class Model {
 
             // TODO: KV Cache
             const logits = await this.run(inputTokens, positions);
+            const logits_float = new Float32Array(Array.from(logits).map(Number));
 
             // TODO: Implement top-p sampling? Llama often uses it.
-            const { topKIndices, topKProbs } = selectTopK(logits, top_k);
+            const { topKIndices, topKProbs } = selectTopK(logits_float, top_k);
             console.log(`indicies ${topKIndices}`);
             const topKProbs_float = new Float32Array(topKProbs);
             const idx_next = topKIndices[sampleFromLogits(topKProbs_float, temperature)];
@@ -269,14 +288,32 @@ export class Model {
      * @param positions Positional indices corresponding to token_ids
      * @returns A Float32Array containing the logits for the input sequence
      */
-    private async run(inputTokens: number[], positions: number[]): Promise<Float32Array> {
+    private async run(inputTokens: number[], positions: number[]): Promise<BigInt64Array> {
+
+        const capacity = this.passes!.length * 2;
+        const labels = new Array();
+        const querySet = this.device!.createQuerySet({
+            type: "timestamp",
+            count: capacity,
+          });
+
+        const queryBuffer = this.device!.createBuffer({
+        size: 8 * capacity,
+        usage: GPUBufferUsage.QUERY_RESOLVE 
+            | GPUBufferUsage.STORAGE
+            | GPUBufferUsage.COPY_SRC
+            | GPUBufferUsage.COPY_DST,
+        });
 
         this.device!.queue.writeBuffer(this.inputBuffer!, 0, new Uint32Array(inputTokens));
         this.device!.queue.writeBuffer(this.positionBuffer!, 0, new Uint32Array(positions));
 
         const commandEncoder = this.device!.createCommandEncoder();
 
-        for (const pass of this.passes!) {
+        for (const [index, pass] of this.passes!.entries()) {
+            const first = index * 2
+            const second = index * 2 + 1;
+            commandEncoder.writeTimestamp(querySet, first);
             const passEncoder = commandEncoder.beginComputePass();
             passEncoder.setPipeline(pass.pipeline);
             for (let i = 0; i < pass.bindGroups.length; i++) {
@@ -285,11 +322,49 @@ export class Model {
             const wgDims = pass.numWorkgroups.map(dim => 
                 typeof dim === "function" ? dim(inputTokens.length) : dim
             );
+
             passEncoder.dispatchWorkgroups(wgDims[0], wgDims[1], wgDims[2]);
             passEncoder.end();
+            commandEncoder.writeTimestamp(querySet, second);
+            labels.push(pass.pipeline.label);
+            console.log(`Pipeline pass ${pass.pipeline}`)
         }
 
+        commandEncoder.resolveQuerySet(
+            querySet, 
+            0,// index of first query to resolve 
+            capacity,//number of queries to resolve
+            queryBuffer, 
+            0);// destination offset
+
         this.device!.queue.submit([commandEncoder.finish()]);
+
+        const arrayBuffer = await this.readBufferData(this.device!, this.device!.queue, queryBuffer, queryBuffer.size);
+        const timingsNanoseconds = new BigInt64Array(arrayBuffer);
+        const processed = this.processTimestamps(timingsNanoseconds);
+
+        let perfOutput = new Map();
+        
+
+        for (const [index, label] of labels.entries()) {
+        if (perfOutput.has(label)) {
+            perfOutput.get(label).push(processed[index]);
+        } else {
+            perfOutput.set(label, [processed[index]]);
+        }
+        }
+
+        console.log(JSON.stringify(Array.from(perfOutput.entries())));
+        perfOutput.forEach((numbers, key) => {
+        if (numbers.length === 0) {
+            return;
+        }
+        
+        const sum = numbers.reduce((acc: number, num: number) => acc + num, 0);
+        const average = sum / numbers.length;
+        
+        console.log(`Shader "${key}": Average Time (ms) = ${average}`);
+        });
 
         const finalArray = await this.gatherTiledResultsWithCopy(
             this.device!,
@@ -300,8 +375,8 @@ export class Model {
             this.params!.vocab_chunk_size
           );
           
-          // `finalArray` is a Float32Array of length contextLength*vocabSize
-          return finalArray;
+        // `finalArray` is a Float32Array of length contextLength*vocabSize
+        return finalArray;
     }
 
     async readBufferData(
@@ -309,7 +384,7 @@ export class Model {
         queue: GPUQueue,
         source: GPUBuffer,
         sizeBytes: number
-      ): Promise<Float32Array> {
+      ): Promise<BigInt64Array> {
         // 1. staging buffer for READ
         const staging = device.createBuffer({
           size: sizeBytes,
@@ -324,7 +399,7 @@ export class Model {
         // 3. map & read
         await staging.mapAsync(GPUMapMode.READ);
         const arrayBuffer = staging.getMappedRange();
-        const data = new Float32Array(arrayBuffer).slice();
+        const data = new BigInt64Array(arrayBuffer).slice();
         staging.unmap();
       
         return data;
@@ -337,10 +412,10 @@ export class Model {
         contextLength: number,
         vocabSize: number,
         chunkSize: number
-      ): Promise<Float32Array> {
+      ): Promise<BigInt64Array> {
         const numChunks = resultBuffers.length;
         const total = contextLength * vocabSize;
-        const out = new Float32Array(total);
+        const out = new BigInt64Array(total);
         const bytesPerChunk = contextLength * chunkSize * 4;
       
         for (let chunkIdx = 0; chunkIdx < numChunks; chunkIdx++) {
@@ -362,7 +437,7 @@ export class Model {
         }
       
         return out;
-      }      
+      }     
       
 
 

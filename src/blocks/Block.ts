@@ -75,7 +75,8 @@ export class Block {
                 module: this.device.createShaderModule({ code: shaderCode, label: label}),
                 entryPoint: "main",
                 constants,
-            }
+            },
+            label: label
         });
 
         return pipeline
